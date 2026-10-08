@@ -2,9 +2,11 @@ package com.chan.shellpilot.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -13,25 +15,27 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 /**
- * 添加服务器表单：别名 / 地址 / 端口 / 用户名 / 密码。
- * 密码仅用于本次连接，不入库。
+ * 添加服务器表单：别名 / 地址 / 端口 / 用户名 / 密码 / 记住密码。
+ * 勾选记住密码后，密码经 EncryptedSharedPreferences 加密存本地，下次直连。
  */
 @Composable
 fun AddServerDialog(
     onDismiss: () -> Unit,
-    onConfirm: (name: String, host: String, port: Int, username: String, password: String) -> Unit,
+    onConfirm: (name: String, host: String, port: Int, username: String, password: String, rememberPassword: Boolean) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
     var portText by remember { mutableStateOf("22") }
     var username by remember { mutableStateOf("root") }
     var password by remember { mutableStateOf("") }
+    var rememberPassword by remember { mutableStateOf(true) }
 
     val hostOk = host.isNotBlank()
     val userOk = username.isNotBlank()
@@ -80,13 +84,23 @@ fun AddServerDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Checkbox(
+                        checked = rememberPassword,
+                        onCheckedChange = { rememberPassword = it },
+                    )
+                    Text("记住密码")
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     val port = portText.toIntOrNull()?.takeIf { it in 1..65535 } ?: 22
-                    onConfirm(name.trim(), host.trim(), port, username.trim(), password)
+                    onConfirm(name.trim(), host.trim(), port, username.trim(), password, rememberPassword)
                 },
                 enabled = hostOk && userOk,
             ) { Text("保存并连接") }
