@@ -49,6 +49,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -60,6 +65,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.delay
 
 private val ESC = 0x1B.toByte()
@@ -307,8 +313,14 @@ private fun CursorBlock(
 
 /**
  * 隐藏输入框（独立 composable）：承载软键盘输入。
- * 哨兵空格保证退格键总有字符可删，从而能被 onValueChange 捕获。
- * 独立出来后，按键只重组自己，不重组整个终端界面。
+ *
+ * 删除键双通道捕获（修"删不掉"）：
+ * 1. onValueChange 哨兵空格：多数软键盘退格走 deleteSurroundingText，
+ *    删掉哨兵空格即触发；
+ * 2. onPreviewKeyEvent 拦截 Key.Backspace：部分输入法（尤其中文键盘）
+ *    的退格以 KeyEvent 形式下发，不经过 onValueChange。
+ * 两条路径互斥（KeyEvent 被消费后文本不变，不会再触发 onValueChange），
+ * 不会重复发送 DEL。
  */
 @Composable
 private fun HiddenInputField(
@@ -325,14 +337,25 @@ private fun HiddenInputField(
             if (new.length > old.length) {
                 for (c in new.substring(old.length)) onChar(c)
             } else if (new.length < old.length) {
-                repeat(old.length - new.length) { onDelete() }
+                val n = old.length - new.length
+                SpLog.d("TerminalInput", "delete x$n via onValueChange")
+                repeat(n) { onDelete() }
             }
-            hidden = " "
+            if (new != " ") hidden = " "
         },
         modifier = Modifier
             .size(1.dp)
             .alpha(0f)
-            .focusRequester(focusRequester),
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                if (event.key == Key.Backspace && event.type == KeyEventType.KeyDown) {
+                    SpLog.d("TerminalInput", "delete via KeyEvent")
+                    onDelete()
+                    true
+                } else {
+                    false
+                }
+            },
         keyboardOptions = KeyboardOptions(
             autoCorrect = false,
             keyboardType = KeyboardType.Text,

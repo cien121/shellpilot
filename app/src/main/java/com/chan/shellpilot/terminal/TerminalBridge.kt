@@ -3,6 +3,7 @@ package com.chan.shellpilot.terminal
 import android.os.SystemClock
 import androidx.compose.ui.text.AnnotatedString
 import com.chan.shellpilot.ssh.ShellSession
+import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -54,14 +55,20 @@ class TerminalBridge(
     }
 
     fun start() {
+        SpLog.i("TerminalBridge", "pump start")
         pumpJob = scope.launch(Dispatchers.IO) {
             val buf = ByteArray(8192)
             var lastEmit = 0L
+            var totalBytes = 0L
             try {
                 while (isActive) {
                     val n = shell.output.read(buf)
-                    if (n < 0) break
+                    if (n < 0) {
+                        SpLog.w("TerminalBridge", "pump: EOF (n<0), totalBytes=$totalBytes")
+                        break
+                    }
                     if (n == 0) continue
+                    totalBytes += n
                     synchronized(lock) { term.processBytes(buf, 0, n) }
                     val now = SystemClock.uptimeMillis()
                     if (now - lastEmit >= 120) {
@@ -69,9 +76,11 @@ class TerminalBridge(
                         withContext(Dispatchers.Main) { _version.value++ }
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Stream closed — session ended.
+                SpLog.w("TerminalBridge", "pump ended: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
+                SpLog.i("TerminalBridge", "pump finished, marking disconnected")
                 withContext(Dispatchers.Main) {
                     _version.value++
                     _connected.value = false
@@ -83,10 +92,13 @@ class TerminalBridge(
     /** 原样发送文本（UTF-8）。 */
     fun sendText(text: String) {
         if (text.isEmpty()) return
+        SpLog.d("TerminalBridge", "sendText: ${text.length} chars")
         scope.launch(Dispatchers.IO) {
             runCatching {
                 shell.input.write(text.toByteArray(Charsets.UTF_8))
                 shell.input.flush()
+            }.onFailure {
+                SpLog.e("TerminalBridge", "sendText failed: ${it.message}")
             }
         }
     }
@@ -94,10 +106,16 @@ class TerminalBridge(
     /** 原样发送字节（特殊键/控制字符）。 */
     fun sendBytes(bytes: ByteArray) {
         if (bytes.isEmpty()) return
+        SpLog.d(
+            "TerminalBridge",
+            "sendBytes: ${bytes.joinToString(" ") { "0x%02X".format(it) }}",
+        )
         scope.launch(Dispatchers.IO) {
             runCatching {
                 shell.input.write(bytes)
                 shell.input.flush()
+            }.onFailure {
+                SpLog.e("TerminalBridge", "sendBytes failed: ${it.message}")
             }
         }
     }
