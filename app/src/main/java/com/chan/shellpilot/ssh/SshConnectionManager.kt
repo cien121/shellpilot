@@ -68,6 +68,11 @@ class SshConnectionManager(
                         offeredKey = key
                         return true
                     }
+
+                    override fun findExistingAlgorithms(
+                        hostname: String,
+                        port: Int,
+                    ): List<String> = emptyList()
                 })
                 // SSH 心跳：必须在 connect() 之前设置！
                 ssh.connection.keepAlive.keepAliveInterval = KEEPALIVE_SECONDS

@@ -76,13 +76,11 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun openAndList(path: String?) {
         setLoading(true)
-        val r = runCatching {
-            val target: String
-            val items: List<SftpEntry>
+        val r: Result<Pair<String, List<SftpEntry>>> = runCatching {
             mutex.withLock {
                 val client = ensureSftpLocked()
-                target = path ?: client.canonicalize(".")
-                items = client.ls(target).mapNotNull { info ->
+                val target = path ?: client.canonicalize(".")
+                val items = client.ls(target).mapNotNull { info ->
                     if (info.name == "." || info.name == "..") return@mapNotNull null
                     SftpEntry(
                         name = info.name,
@@ -92,8 +90,8 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                         mtimeSec = info.attributes.mtime,
                     )
                 }.sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+                target to items
             }
-            target to items
         }
         r.onSuccess { (target, items) ->
             _uiState.value = _uiState.value.copy(
@@ -142,10 +140,9 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun upload(input: InputStream, fileName: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val remote: String
                 mutex.withLock {
                     val c = ensureSftpLocked()
-                    remote = joinPath(_uiState.value.path, fileName)
+                    val remote = joinPath(_uiState.value.path, fileName)
                     input.use { ins -> c.put(ins, remote) }
                 }
                 SpLog.i("SFTP", "uploaded $fileName")
