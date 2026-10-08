@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,13 +17,10 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -39,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -131,91 +126,52 @@ fun PerfMonitorScreen(
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator() }
             } else {
-                PerfCard(
-                    icon = Icons.Filled.Speed,
-                    title = "CPU",
-                    accent = Color(0xFF4FC3F7),
-                    valueText = stats.cpuText,
-                    fraction = stats.cpuFraction,
-                    detail = stats.cpuDetail,
-                )
-                PerfCard(
-                    icon = Icons.Filled.Memory,
-                    title = "内存",
-                    accent = Color(0xFFBA68C8),
-                    valueText = stats.memText,
-                    fraction = stats.memFraction,
-                    detail = stats.memDetail,
-                )
-                PerfCard(
-                    icon = Icons.Filled.Storage,
-                    title = "硬盘",
-                    accent = Color(0xFFFFB74D),
-                    valueText = stats.diskText,
-                    fraction = stats.diskFraction,
-                    detail = stats.diskDetail,
-                )
-                PerfCard(
-                    icon = Icons.Filled.NetworkCheck,
-                    title = "网络",
-                    accent = Color(0xFF81C784),
-                    valueText = stats.netText,
-                    fraction = null,
-                    detail = stats.netDetail,
-                )
+                // 网络文案形如 "↓1.2MB/s ↑300KB/s"，拆成表盘中央两行
+                val netParts = stats.netText.split(" ", limit = 2)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GaugeCard(
+                            icon = Icons.Filled.Speed,
+                            title = "CPU",
+                            accent = Color(0xFF4FC3F7),
+                            centerTop = stats.cpuText,
+                            fraction = stats.cpuFraction,
+                            detail = stats.cpuDetail,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GaugeCard(
+                            icon = Icons.Filled.Memory,
+                            title = "内存",
+                            accent = Color(0xFFBA68C8),
+                            centerTop = stats.memText,
+                            fraction = stats.memFraction,
+                            detail = stats.memDetail,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GaugeCard(
+                            icon = Icons.Filled.Storage,
+                            title = "硬盘",
+                            accent = Color(0xFFFFB74D),
+                            centerTop = stats.diskText,
+                            fraction = stats.diskFraction,
+                            detail = stats.diskDetail,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GaugeCard(
+                            icon = Icons.Filled.NetworkCheck,
+                            title = "网络",
+                            accent = Color(0xFF81C784),
+                            centerTop = netParts.getOrElse(0) { "--" },
+                            centerBottom = netParts.getOrElse(1) { "" },
+                            fraction = null,
+                            detail = stats.netDetail,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
                 Spacer(Modifier.height(24.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun PerfCard(
-    icon: ImageVector,
-    title: String,
-    accent: Color,
-    valueText: String,
-    fraction: Float?,
-    detail: String,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, tint = accent)
-                Spacer(Modifier.padding(horizontal = 4.dp))
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    valueText,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 22.sp,
-                    color = accent,
-                )
-            }
-            if (fraction != null) {
-                Spacer(Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { fraction.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp),
-                    color = accent,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-            }
-            if (detail.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }

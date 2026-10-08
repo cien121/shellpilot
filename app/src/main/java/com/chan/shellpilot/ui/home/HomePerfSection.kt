@@ -28,7 +28,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -41,11 +40,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.chan.shellpilot.data.Server
+import com.chan.shellpilot.ui.perf.GaugeCard
+
 
 /**
  * 主页嵌入式性能区：选服务器 → 后台自动连接 → 四张小卡片 3 秒刷新。
@@ -243,102 +242,54 @@ fun HomePerfSection(
                     ) { CircularProgressIndicator(modifier = Modifier.size(28.dp)) }
                 } else {
                     val s = st.stats
+                    val netParts = s.netText.split(" ", limit = 2)
                     Column(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            MiniPerfCard(
+                            GaugeCard(
                                 icon = Icons.Filled.Speed,
                                 title = "CPU",
                                 accent = Color(0xFF4FC3F7),
-                                valueText = s.cpuText,
+                                centerTop = s.cpuText,
                                 fraction = s.cpuFraction,
+                                dialSize = 84.dp,
                                 modifier = Modifier.weight(1f),
                             )
-                            MiniPerfCard(
+                            GaugeCard(
                                 icon = Icons.Filled.Memory,
                                 title = "内存",
                                 accent = Color(0xFFBA68C8),
-                                valueText = s.memText,
+                                centerTop = s.memText,
                                 fraction = s.memFraction,
+                                dialSize = 84.dp,
                                 modifier = Modifier.weight(1f),
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            MiniPerfCard(
+                            GaugeCard(
                                 icon = Icons.Filled.Storage,
                                 title = "硬盘",
                                 accent = Color(0xFFFFB74D),
-                                valueText = s.diskText,
+                                centerTop = s.diskText,
                                 fraction = s.diskFraction,
+                                dialSize = 84.dp,
                                 modifier = Modifier.weight(1f),
                             )
-                            MiniPerfCard(
+                            GaugeCard(
                                 icon = Icons.Filled.NetworkCheck,
                                 title = "网络",
                                 accent = Color(0xFF81C784),
-                                valueText = s.netText,
+                                centerTop = netParts.getOrElse(0) { "--" },
+                                centerBottom = netParts.getOrElse(1) { "" },
                                 fraction = null,
+                                dialSize = 84.dp,
                                 modifier = Modifier.weight(1f),
                             )
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MiniPerfCard(
-    icon: ImageVector,
-    title: String,
-    accent: Color,
-    valueText: String,
-    fraction: Float?,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    title,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                valueText,
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                color = accent,
-                maxLines = 1,
-            )
-            if (fraction != null) {
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { fraction.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp),
-                    color = accent,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
             }
         }
     }
