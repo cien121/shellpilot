@@ -13,8 +13,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.SFTPClient
 import java.io.ByteArrayOutputStream
+import java.util.EnumSet
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -115,8 +117,9 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                 if (attrs.size > 2 * 1024 * 1024) {
                     throw IllegalArgumentException("文件过大（>2MB），请下载查看")
                 }
+                val rf = c.open(path)
                 val buf = ByteArrayOutputStream()
-                c.get(path, buf)
+                rf.RemoteFileInputStream().use { ins -> ins.copyTo(buf) }
                 buf.toString(Charsets.UTF_8.name())
             }
         }
@@ -128,8 +131,11 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
             runCatching {
                 mutex.withLock {
                     val c = ensureSftpLocked()
-                    content.byteInputStream(Charsets.UTF_8).use { ins ->
-                        c.put(ins, path)
+                    val rf = c.open(path, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
+                    rf.RemoteFileOutputStream().use { outs ->
+                        content.byteInputStream(Charsets.UTF_8).use { ins ->
+                            ins.copyTo(outs)
+                        }
                     }
                 }
                 SpLog.i("SFTP", "saved $path")
@@ -143,7 +149,10 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                 mutex.withLock {
                     val c = ensureSftpLocked()
                     val remote = joinPath(_uiState.value.path, fileName)
-                    input.use { ins -> c.put(ins, remote) }
+                    val rf = c.open(remote, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
+                    rf.RemoteFileOutputStream().use { outs ->
+                        input.use { ins -> ins.copyTo(outs) }
+                    }
                 }
                 SpLog.i("SFTP", "uploaded $fileName")
             }.also { refresh() }
@@ -155,7 +164,10 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
             runCatching {
                 mutex.withLock {
                     val c = ensureSftpLocked()
-                    out.use { o -> c.get(entry.path, o) }
+                    val rf = c.open(entry.path)
+                    rf.RemoteFileInputStream().use { ins ->
+                        out.use { o -> ins.copyTo(o) }
+                    }
                 }
                 SpLog.i("SFTP", "downloaded ${entry.path}")
             }
