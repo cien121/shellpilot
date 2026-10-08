@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chan.shellpilot.data.Server
 import com.chan.shellpilot.data.ShellPilotDatabase
+import com.chan.shellpilot.ssh.KeyStore
 import com.chan.shellpilot.ssh.PasswordStore
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -12,11 +13,12 @@ import kotlinx.coroutines.launch
 
 /**
  * Room-backed server list. Add / delete servers.
- * 记住的密码走 EncryptedSharedPreferences（PasswordStore），不进 Room。
+ * 记住的密码走 EncryptedSharedPreferences（PasswordStore），私钥走 KeyStore，都不进 Room。
  */
 class ServerListViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = ShellPilotDatabase.get(app).serverDao()
     private val passwordStore = PasswordStore(app)
+    private val keyStore = KeyStore(app)
 
     val servers = dao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -28,6 +30,10 @@ class ServerListViewModel(app: Application) : AndroidViewModel(app) {
         username: String,
         password: String = "",
         rememberPassword: Boolean = false,
+        authType: String = "password",
+        keyPem: String? = null,
+        keyName: String? = null,
+        keyPassphrase: String? = null,
         onDone: (Server) -> Unit = {},
     ) {
         viewModelScope.launch {
@@ -36,19 +42,65 @@ class ServerListViewModel(app: Application) : AndroidViewModel(app) {
                 host = host.trim(),
                 port = port,
                 username = username.trim(),
-                authType = "password",
+                authType = authType,
+                credential = keyName ?: "",
             )
             val id = dao.upsert(server)
-            if (rememberPassword && password.isNotEmpty()) {
+            if (authType == "key" && !keyPem.isNullOrBlank()) {
+                keyStore.save(id, keyPem, keyPassphrase)
+            } else if (rememberPassword && password.isNotEmpty()) {
                 passwordStore.save(id, password)
             }
             onDone(server.copy(id = id))
         }
     }
 
+    /** 编辑服务器：更新 Room；认证信息按新选择覆盖。 */
+    fun updateServer(
+        server: Server,
+        name: String,
+        host: String,
+        port: Int,
+        username: String,
+        password: String = "",
+        rememberPassword: Boolean = false,
+        authType: String = "password",
+        keyPem: String? = null, // 非空 = 用户重新选了私钥
+        keyName: String? = null,
+        keyPassphrase: String? = null,
+        onDone: () -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val updated = server.copy(
+                name = name.ifBlank { "$username@$host" },
+                host = host.trim(),
+                port = port,
+                username = username.trim(),
+                authType = authType,
+                credential = if (authType == "key") (keyName ?: server.credential) else "",
+            )
+            dao.update(updated)
+            if (authType == "key") {
+                if (!keyPem.isNullOrBlank()) {
+                    keyStore.save(server.id, keyPem, keyPassphrase)
+                }
+                passwordStore.clear(server.id)
+            } else {
+                keyStore.clear(server.id)
+                if (rememberPassword && password.isNotEmpty()) {
+                    passwordStore.save(server.id, password)
+                } else if (!rememberPassword) {
+                    passwordStore.clear(server.id)
+                }
+            }
+            onDone()
+        }
+    }
+
     fun deleteServer(server: Server) {
         viewModelScope.launch {
             passwordStore.clear(server.id)
+            keyStore.clear(server.id)
             dao.delete(server)
         }
     }
@@ -67,4 +119,9 @@ class ServerListViewModel(app: Application) : AndroidViewModel(app) {
     fun clearStoredPassword(server: Server) {
         viewModelScope.launch { passwordStore.clear(server.id) }
     }
+
+    /** 私钥（pem, passphrase?），没导入过返回 null。 */
+    suspend fun storedKey(serverId: Long): Pair<String, String?>? = keyStore.get(serverId)
+
+    suspend fun hasStoredKey(serverId: Long): Boolean = keyStore.has(serverId)
 }

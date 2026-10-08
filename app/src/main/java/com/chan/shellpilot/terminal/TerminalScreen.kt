@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -86,6 +87,7 @@ fun TerminalScreen(
     title: String,
     bridge: TerminalBridge?,
     onBack: () -> Unit,
+    onOpenSftp: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 行快照由 TerminalBridge 在 IO 线程构建好后发布，UI 只做增量重排
@@ -183,6 +185,12 @@ fun TerminalScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    // SFTP 文件管理入口：与终端共用同一条 SSH 连接
+                    IconButton(onClick = onOpenSftp) {
+                        Icon(Icons.Filled.Folder, contentDescription = "文件管理")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

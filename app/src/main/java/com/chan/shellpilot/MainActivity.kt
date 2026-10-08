@@ -4,47 +4,67 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chan.shellpilot.data.Server
 import com.chan.shellpilot.terminal.TerminalScreen
+import com.chan.shellpilot.ui.AddServerDialog
 import com.chan.shellpilot.ui.ConnectState
+import com.chan.shellpilot.ui.ServerDraft
 import com.chan.shellpilot.ui.ServerListViewModel
 import com.chan.shellpilot.ui.TerminalViewModel
 import com.chan.shellpilot.ui.events.EventLogScreen
 import com.chan.shellpilot.ui.events.EventLogViewModel
 import com.chan.shellpilot.ui.home.HomeScreen
 import com.chan.shellpilot.ui.home.ManageConnectionsScreen
+import com.chan.shellpilot.ui.perf.PerfMonitorScreen
 import com.chan.shellpilot.ui.settings.SettingsScreen
+import com.chan.shellpilot.ui.sftp.SftpScreen
 import com.chan.shellpilot.ui.snippets.SnippetsScreen
 import com.chan.shellpilot.ui.theme.ShellPilotTheme
 import com.chan.shellpilot.util.SpLog
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
 
 /** 应用内页面路由（简单状态机，不引入 Navigation 库）。 */
 private enum class Route {
-    Home, ManageConnections, Snippets, EventLog, Settings, Terminal, Placeholder
+    Home, ManageConnections, Snippets, EventLog, Settings, Terminal,
+    Sftp, PerfMonitor, Placeholder
 }
 
 class MainActivity : ComponentActivity() {
@@ -62,6 +82,10 @@ class MainActivity : ComponentActivity() {
                 val scope = rememberCoroutineScope()
                 var route by remember { mutableStateOf(Route.Home) }
                 var placeholderTitle by remember { mutableStateOf("") }
+                // 对话框状态
+                var showAddDialog by remember { mutableStateOf(false) }
+                var editServer by remember { mutableStateOf<Server?>(null) }
+                var pwPromptServer by remember { mutableStateOf<Server?>(null) }
                 // Activity 重建时（如切后台后返回），若后台还有活着的连接，
                 // 直接回到终端页，而不是主页。
                 var currentServer by remember {
@@ -71,6 +95,7 @@ class MainActivity : ComponentActivity() {
                 val servers by listViewModel.servers.collectAsState()
 
                 val bridge = (connectState as? ConnectState.Connected)?.bridge
+                val activeManager = app.sshSession?.manager
 
                 // 连接成功 → 记日志 + 跳终端页
                 androidx.compose.runtime.LaunchedEffect(connectState) {
@@ -82,13 +107,68 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                fun connectTo(server: Server, password: String) {
+                /** 解析凭据并发起连接：私钥走 KeyStore，密码走记住的密码或弹框。 */
+                fun connectTo(server: Server) {
                     currentServer = server
                     eventLogViewModel.log(
                         server.name,
                         "正在连接 ${server.host}:${server.port}"
                     )
-                    terminalViewModel.connect(server, password)
+                    scope.launch {
+                        if (server.authType == "key") {
+                            val k = listViewModel.storedKey(server.id)
+                            if (k == null) {
+                                eventLogViewModel.log(server.name, "未找到私钥，请重新编辑导入")
+                                SpLog.w("MainActivity", "no key for server ${server.id}")
+                                return@launch
+                            }
+                            terminalViewModel.connect(
+                                server, keyPem = k.first, keyPassphrase = k.second,
+                            )
+                        } else {
+                            val stored = listViewModel.storedPassword(server.id)
+                            if (stored != null) {
+                                terminalViewModel.connect(server, password = stored)
+                            } else {
+                                // 没记住密码：弹密码输入框
+                                pwPromptServer = server
+                            }
+                        }
+                    }
+                }
+
+                fun submitDraft(draft: ServerDraft, editing: Server?) {
+                    if (editing == null) {
+                        listViewModel.addServer(
+                            name = draft.name,
+                            host = draft.host,
+                            port = draft.port,
+                            username = draft.username,
+                            password = draft.password,
+                            rememberPassword = draft.rememberPassword,
+                            authType = draft.authType,
+                            keyPem = draft.keyPem,
+                            keyName = draft.keyName,
+                            keyPassphrase = draft.keyPassphrase,
+                        ) { server ->
+                            showAddDialog = false
+                            connectTo(server)
+                        }
+                    } else {
+                        listViewModel.updateServer(
+                            server = editing,
+                            name = draft.name,
+                            host = draft.host,
+                            port = draft.port,
+                            username = draft.username,
+                            password = draft.password,
+                            rememberPassword = draft.rememberPassword,
+                            authType = draft.authType,
+                            keyPem = draft.keyPem,
+                            keyName = draft.keyName,
+                            keyPassphrase = draft.keyPassphrase,
+                        ) { editServer = null }
+                    }
                 }
 
                 when (route) {
@@ -103,14 +183,28 @@ class MainActivity : ComponentActivity() {
                                     currentServer = null
                                     route = Route.Home
                                 },
+                                onOpenSftp = { route = Route.Sftp },
                             )
                         } else {
                             // 连接没了但还停在终端页（极端情况）→ 回主页
-                            if (connectState !is ConnectState.Connecting) {
+                            if (connectState !is ConnectState.Connecting &&
+                                connectState !is ConnectState.HostKeyPrompt
+                            ) {
                                 currentServer = null
                                 route = Route.Home
                             }
                         }
+                    }
+                    Route.Sftp -> {
+                        SftpScreen(onBack = { route = Route.Terminal })
+                    }
+                    Route.PerfMonitor -> {
+                        PerfMonitorScreen(
+                            manager = activeManager,
+                            serverName = currentServer?.name
+                                ?: app.sshSession?.server?.name ?: "",
+                            onBack = { route = Route.Home },
+                        )
                     }
                     Route.Home -> {
                         HomeScreen(
@@ -121,43 +215,20 @@ class MainActivity : ComponentActivity() {
                                 route = Route.Placeholder
                             },
                             onEventLog = { route = Route.EventLog },
-                            onPerfMonitor = {
-                                placeholderTitle = "性能监视器"
-                                route = Route.Placeholder
-                            },
+                            onPerfMonitor = { route = Route.PerfMonitor },
                             onSnippets = { route = Route.Snippets },
                             onSettings = { route = Route.Settings },
-                            onConnectServer = { server ->
-                                scope.launch {
-                                    val stored = listViewModel.storedPassword(server.id)
-                                    if (stored != null) {
-                                        connectTo(server, stored)
-                                    } else {
-                                        // 没记住密码：走管理连接页处理（简化：直接跳管理页）
-                                        route = Route.ManageConnections
-                                    }
-                                }
-                            },
-                            onAddServer = { route = Route.ManageConnections },
+                            onConnectServer = { connectTo(it) },
+                            onAddServer = { showAddDialog = true },
                         )
                     }
                     Route.ManageConnections -> {
                         ManageConnectionsScreen(
                             servers = servers,
                             onBack = { route = Route.Home },
-                            onConnect = { server ->
-                                scope.launch {
-                                    val stored = listViewModel.storedPassword(server.id)
-                                    if (stored != null) {
-                                        connectTo(server, stored)
-                                    } else {
-                                        // TODO: 密码输入框（后续接）
-                                        eventLogViewModel.log(server.name, "需要输入密码（待实现）")
-                                    }
-                                }
-                            },
-                            onAdd = { /* TODO: 添加服务器对话框 */ },
-                            onEdit = { /* TODO: 编辑 */ },
+                            onConnect = { connectTo(it) },
+                            onAdd = { showAddDialog = true },
+                            onEdit = { editServer = it },
                             onDelete = { listViewModel.deleteServer(it) },
                         )
                     }
@@ -189,6 +260,55 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+
+                // ---- 对话框 ----
+                if (showAddDialog) {
+                    AddServerDialog(
+                        onDismiss = { showAddDialog = false },
+                        onConfirm = { submitDraft(it, null) },
+                    )
+                }
+                val editing = editServer
+                if (editing != null) {
+                    AddServerDialog(
+                        server = editing,
+                        onDismiss = { editServer = null },
+                        onConfirm = { submitDraft(it, editing) },
+                    )
+                }
+                val pwSrv = pwPromptServer
+                if (pwSrv != null) {
+                    PasswordPromptDialog(
+                        server = pwSrv,
+                        onDismiss = { pwPromptServer = null },
+                        onConfirm = { password, remember ->
+                            pwPromptServer = null
+                            if (remember) listViewModel.savePassword(pwSrv.id, password)
+                            terminalViewModel.connect(pwSrv, password = password)
+                        },
+                    )
+                }
+                val hkPrompt = connectState as? ConnectState.HostKeyPrompt
+                if (hkPrompt != null) {
+                    HostKeyDialog(
+                        prompt = hkPrompt,
+                        onTrust = { terminalViewModel.confirmHostKey() },
+                        onReject = { terminalViewModel.dismissHostKeyPrompt() },
+                    )
+                }
+                val failed = connectState as? ConnectState.Failed
+                if (failed != null) {
+                    AlertDialog(
+                        onDismissRequest = { terminalViewModel.resetError() },
+                        title = { Text("连接失败") },
+                        text = { Text(failed.message) },
+                        confirmButton = {
+                            TextButton(onClick = { terminalViewModel.resetError() }) {
+                                Text("确定")
+                            }
+                        },
+                    )
+                }
             }
         }
     }
@@ -202,6 +322,104 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         SpLog.i("MainActivity", "onResume (app -> foreground)")
     }
+}
+
+/** 没记住密码时的密码输入框。 */
+@Composable
+private fun PasswordPromptDialog(
+    server: Server,
+    onDismiss: () -> Unit,
+    onConfirm: (password: String, remember: Boolean) -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var remember by remember { mutableStateOf(true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("输入密码") },
+        text = {
+            Column {
+                Text(
+                    "${server.username}@${server.host}:${server.port}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = remember, onCheckedChange = { remember = it })
+                    Text("记住密码")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = password.isNotEmpty(),
+                onClick = { onConfirm(password, remember) },
+            ) { Text("连接") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 主机密钥确认框：首次连接显示指纹；密钥变更时红色警告。 */
+@Composable
+private fun HostKeyDialog(
+    prompt: ConnectState.HostKeyPrompt,
+    onTrust: () -> Unit,
+    onReject: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onReject,
+        title = {
+            Text(
+                if (prompt.changed) "警告：主机密钥已变更！" else "确认服务器指纹",
+                color = if (prompt.changed) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (prompt.changed) {
+                    Text(
+                        "该服务器的主机密钥与上次记录的不一致，可能是服务器重装，也可能是中间人攻击。请核对后再决定。",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Text("旧指纹：${prompt.oldFingerprint ?: "--"}")
+                } else {
+                    Text("首次连接该服务器，请核对指纹无误后信任：")
+                }
+                Text("${prompt.server.host}:${prompt.server.port}")
+                Text(
+                    "${prompt.keyType}\n${prompt.fingerprint}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onTrust) {
+                Text(if (prompt.changed) "信任新密钥并连接" else "信任并连接")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onReject) { Text("取消") }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
