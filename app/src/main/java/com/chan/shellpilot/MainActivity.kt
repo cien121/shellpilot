@@ -51,6 +51,8 @@ import com.chan.shellpilot.ui.ServerListViewModel
 import com.chan.shellpilot.ui.TerminalViewModel
 import com.chan.shellpilot.ui.events.EventLogScreen
 import com.chan.shellpilot.ui.events.EventLogViewModel
+import com.chan.shellpilot.ui.home.HomePerfSection
+import com.chan.shellpilot.ui.home.HomePerfViewModel
 import com.chan.shellpilot.ui.home.HomeScreen
 import com.chan.shellpilot.ui.home.ManageConnectionsScreen
 import com.chan.shellpilot.ui.perf.PerfMonitorScreen
@@ -78,6 +80,7 @@ class MainActivity : ComponentActivity() {
                 val app = LocalContext.current.applicationContext as ShellPilotApp
                 val listViewModel: ServerListViewModel = viewModel()
                 val terminalViewModel: TerminalViewModel = viewModel()
+                val homePerfVm: HomePerfViewModel = viewModel()
                 val eventLogViewModel: EventLogViewModel = viewModel()
                 val scope = rememberCoroutineScope()
                 var route by remember { mutableStateOf(Route.Home) }
@@ -236,6 +239,13 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onAddServer = { showAddDialog = true },
+                            perfSection = {
+                                HomePerfSection(
+                                    vm = homePerfVm,
+                                    servers = servers,
+                                    onAddServer = { showAddDialog = true },
+                                )
+                            },
                         )
                     }
                     Route.ManageConnections -> {

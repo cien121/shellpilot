@@ -57,6 +57,7 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onConnectServer: (Server) -> Unit,
     onAddServer: () -> Unit,
+    perfSection: @Composable () -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -138,6 +139,12 @@ fun HomeScreen(
             }
         }
 
+        // 性能（嵌入式：后台自动连接选定的服务器）
+        item {
+            Spacer(Modifier.height(8.dp))
+            perfSection()
+        }
+
         // 工具
         item {
             Spacer(Modifier.height(8.dp))
@@ -160,7 +167,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
+internal fun SectionTitle(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
