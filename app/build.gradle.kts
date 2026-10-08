@@ -13,8 +13,8 @@ android {
         applicationId = "com.chan.shellpilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.1"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -109,6 +109,9 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // EncryptedSharedPreferences —记住服务器密码（AES256 加密存储）
+    implementation("androidx.security:security-crypto:1.1.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
