@@ -62,6 +62,11 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        // 顶部留白
+        item {
+            Spacer(Modifier.height(16.dp))
+        }
+
         // 管理
         item {
             SectionTitle("管理")
