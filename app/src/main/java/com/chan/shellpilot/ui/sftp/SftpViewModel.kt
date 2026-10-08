@@ -81,7 +81,10 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
         val r: Result<Pair<String, List<SftpEntry>>> = runCatching {
             mutex.withLock {
                 val client = ensureSftpLocked()
-                val target = path ?: client.canonicalize(".")
+                // 家目录解析：用 exec pwd，不走 SFTP REALPATH。
+                // 某些服务端/版本组合下 REALPATH 响应会触发 SSHJ 内部
+                // System.arraycopy 越界（dstPos=-4），导致目录读不出来。
+                val target = path ?: resolveHomeDir()
                 val items = client.ls(target).mapNotNull { info ->
                     if (info.name == "." || info.name == "..") return@mapNotNull null
                     SftpEntry(
@@ -102,10 +105,33 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
             )
         }.onFailure {
             SpLog.e("SFTP", "ls failed: ${it.message}", it)
+            // SSHJ 内部包解析异常（arraycopy 越界等）说明 PacketReader
+            // 状态已损坏：丢弃缓存的 client，下次重建，避免一直失败。
+            if (it is ArrayIndexOutOfBoundsException) {
+                invalidateSftpLocked()
+            }
             _uiState.value = _uiState.value.copy(
                 loading = false, error = "读取目录失败：${it.message?.take(100)}",
             )
         }
+    }
+
+    /**
+     * 取远端家目录：exec pwd。失败回退 "."。
+     * 注意：调用时已持有 [mutex]，exec 走独立通道，不会死锁。
+     */
+    private suspend fun resolveHomeDir(): String {
+        val pwd = runCatching {
+            pilotApp.sshSession?.manager?.exec("pwd")?.getOrNull()?.trim()
+        }.getOrNull()
+        return if (!pwd.isNullOrEmpty() && pwd.startsWith("/")) pwd else "."
+    }
+
+    /** 丢弃已损坏的 SFTP 客户端（SSHJ 内部状态异常时调用）。 */
+    private fun invalidateSftpLocked() {
+        runCatching { sftp?.close() }
+        sftp = null
+        SpLog.w("SFTP", "sftp client invalidated after low-level failure")
     }
 
     /** 读取文本文件（>2MB 拒绝）。 */

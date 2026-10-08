@@ -179,6 +179,12 @@ class MainActivity : ComponentActivity() {
                                 title = srv.name,
                                 bridge = bridge,
                                 onBack = {
+                                    // 返回主页不断开：连接在 Application 级保活，
+                                    // 用户可去性能监视器/SFTP 等页面，回来继续用。
+                                    // 断开请点顶栏的断开按钮。
+                                    route = Route.Home
+                                },
+                                onDisconnect = {
                                     terminalViewModel.disconnect()
                                     currentServer = null
                                     route = Route.Home
@@ -218,7 +224,17 @@ class MainActivity : ComponentActivity() {
                             onPerfMonitor = { route = Route.PerfMonitor },
                             onSnippets = { route = Route.Snippets },
                             onSettings = { route = Route.Settings },
-                            onConnectServer = { connectTo(it) },
+                            onConnectServer = {
+                                // 已连上这台：直接进终端，不重连
+                                if (connectState is ConnectState.Connected &&
+                                    currentServer?.id == it.id &&
+                                    app.sshSession?.manager?.isConnected == true
+                                ) {
+                                    route = Route.Terminal
+                                } else {
+                                    connectTo(it)
+                                }
+                            },
                             onAddServer = { showAddDialog = true },
                         )
                     }
@@ -226,7 +242,17 @@ class MainActivity : ComponentActivity() {
                         ManageConnectionsScreen(
                             servers = servers,
                             onBack = { route = Route.Home },
-                            onConnect = { connectTo(it) },
+                            onConnect = {
+                                // 已连上这台：直接进终端，不重连
+                                if (connectState is ConnectState.Connected &&
+                                    currentServer?.id == it.id &&
+                                    app.sshSession?.manager?.isConnected == true
+                                ) {
+                                    route = Route.Terminal
+                                } else {
+                                    connectTo(it)
+                                }
+                            },
                             onAdd = { showAddDialog = true },
                             onEdit = { editServer = it },
                             onDelete = { listViewModel.deleteServer(it) },

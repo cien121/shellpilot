@@ -94,7 +94,19 @@ fun PerfMonitorScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("请先连接服务器", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "暂无活跃连接",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "请先在首页连接一台服务器",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
             return@Scaffold
         }

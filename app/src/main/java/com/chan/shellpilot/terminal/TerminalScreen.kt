@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -88,6 +89,7 @@ fun TerminalScreen(
     bridge: TerminalBridge?,
     onBack: () -> Unit,
     onOpenSftp: () -> Unit = {},
+    onDisconnect: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 行快照由 TerminalBridge 在 IO 线程构建好后发布，UI 只做增量重排
@@ -191,6 +193,10 @@ fun TerminalScreen(
                     // SFTP 文件管理入口：与终端共用同一条 SSH 连接
                     IconButton(onClick = onOpenSftp) {
                         Icon(Icons.Filled.Folder, contentDescription = "文件管理")
+                    }
+                    // 断开连接：返回键不再断开（保持后台连接），断开走这里
+                    IconButton(onClick = onDisconnect) {
+                        Icon(Icons.Filled.PowerSettingsNew, contentDescription = "断开连接")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
