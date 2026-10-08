@@ -10,7 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -94,9 +93,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                 loading = false, error = null,
             )
         } catch (e: CancellationException) {
-            // 真取消（页面销毁等）继续抛；超时类取消按失败处理
-            if (!coroutineContext.isActive) throw e
-            setError(e)
+            throw e // 协程取消（页面销毁等）不是失败，直接抛
         } catch (e: Exception) {
             setError(e)
         }
@@ -119,8 +116,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
         try {
             return withFreshSftp { c -> sftpLs(c, target) }
         } catch (e: CancellationException) {
-            if (!coroutineContext.isActive) throw e
-            SpLog.w("SFTP", "sftp ls cancelled, fallback to exec")
+            throw e // 协程取消直接抛，不走 exec 兜底
         } catch (e: Exception) {
             SpLog.w(
                 "SFTP",
