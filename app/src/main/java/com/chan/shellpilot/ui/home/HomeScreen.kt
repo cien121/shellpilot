@@ -17,12 +17,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -42,8 +39,9 @@ import com.chan.shellpilot.data.Server
 
 /**
  * 主页：仿 LobiShell 分区式布局。
- * - 管理：管理连接 / 活跃隧道 / 日志和事件 / 性能监视器
+ * - 管理：管理连接
  * - 连接：服务器卡片列表
+ * - 性能：嵌入式性能监控（后台自动连接选定的服务器）
  * - 工具：代码片段 / 设置
  */
 @Composable
@@ -75,24 +73,6 @@ fun HomeScreen(
                 title = "管理连接",
                 subtitle = "SSH 连接、端口转发和身份",
                 onClick = onManageConnections,
-            )
-            ManageCard(
-                icon = Icons.Filled.Cable,
-                title = "活跃隧道",
-                subtitle = "无活跃隧道",
-                onClick = onTunnels,
-            )
-            ManageCard(
-                icon = Icons.Filled.ReceiptLong,
-                title = "日志和事件",
-                subtitle = "连接和同步事件",
-                onClick = onEventLog,
-            )
-            ManageCard(
-                icon = Icons.Filled.ShowChart,
-                title = "性能监视器",
-                subtitle = "CPU、RAM、磁盘和网络图表",
-                onClick = onPerfMonitor,
             )
         }
 
@@ -282,3 +262,4 @@ private fun ServerCard(
         }
     }
 }
+
