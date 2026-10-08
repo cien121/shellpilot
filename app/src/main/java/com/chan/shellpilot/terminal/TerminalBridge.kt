@@ -7,6 +7,7 @@ import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,6 +47,7 @@ class TerminalBridge(
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
     private var pumpJob: Job? = null
+    private var trailingEmitJob: Job? = null
 
     /** 当前终端画面快照（主线程调用）。 */
     fun snapshot(): AnnotatedString = synchronized(lock) { term.snapshot() }
@@ -60,6 +62,8 @@ class TerminalBridge(
     companion object {
         /** 单次渲染的最大行数：控制 Compose Text 布局开销。 */
         const val MAX_DISPLAY_LINES = 500
+        /** 快照推送节流间隔（毫秒）。 */
+        const val EMIT_INTERVAL_MS = 120L
     }
 
     fun start() {
@@ -81,6 +85,7 @@ class TerminalBridge(
                     val now = SystemClock.uptimeMillis()
                     if (now - lastEmit >= 120) {
                         lastEmit = now
+                        trailingEmitJob?.cancel()
                         // 行快照在 IO 线程构建（AnnotatedString 是纯数据类，
                         // 不需要主线程），发布后 UI 线程只做增量重排。
                         val snap = synchronized(lock) {
@@ -90,14 +95,37 @@ class TerminalBridge(
                             _lines.value = snap
                             _version.value++
                         }
+                    } else {
+                        // 兜底推送（修 prompt 丢失）：
+                        // 若数据在节流窗口内到达，UI 不会立即更新；
+                        // 安排一个延迟推送，确保这段"尾巴数据"最终显示，
+                        // 否则 shell prompt 会卡在 buffer 里看不见。
+                        // debounce：持续有数据时不断顺延，停顿时触发。
+                        trailingEmitJob?.cancel()
+                        trailingEmitJob = scope.launch {
+                            delay(EMIT_INTERVAL_MS)
+                            val snap2 = synchronized(lock) {
+                                term.snapshotLines(MAX_DISPLAY_LINES)
+                            }
+                            withContext(Dispatchers.Main) {
+                                _lines.value = snap2
+                                _version.value++
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
                 // Stream closed — session ended.
                 SpLog.w("TerminalBridge", "pump ended: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
+                trailingEmitJob?.cancel()
                 SpLog.i("TerminalBridge", "pump finished, marking disconnected")
+                // 断开前推送最终快照，避免尾巴数据丢失
+                val finalSnap = synchronized(lock) {
+                    term.snapshotLines(MAX_DISPLAY_LINES)
+                }
                 withContext(Dispatchers.Main) {
+                    _lines.value = finalSnap
                     _version.value++
                     _connected.value = false
                 }
