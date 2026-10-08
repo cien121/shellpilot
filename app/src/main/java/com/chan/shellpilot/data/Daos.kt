@@ -31,8 +31,14 @@ interface SnippetDao {
     @Query("SELECT * FROM snippets ORDER BY sortOrder ASC, id ASC")
     fun observeAll(): Flow<List<Snippet>>
 
+    @Query("SELECT * FROM snippets WHERE group = :group ORDER BY sortOrder ASC, id ASC")
+    fun observeByGroup(group: String): Flow<List<Snippet>>
+
     @Query("SELECT * FROM snippets WHERE autoRunOnConnect = 1 ORDER BY sortOrder ASC")
     suspend fun getAutoRun(): List<Snippet>
+
+    @Query("SELECT DISTINCT `group` FROM snippets WHERE `group` != '' ORDER BY `group` ASC")
+    fun observeGroups(): Flow<List<String>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(snippet: Snippet): Long
@@ -42,4 +48,16 @@ interface SnippetDao {
 
     @Delete
     suspend fun delete(snippet: Snippet)
+}
+
+@Dao
+interface EventLogDao {
+    @Query("SELECT * FROM event_logs ORDER BY timestamp DESC LIMIT 200")
+    fun observeRecent(): Flow<List<EventLog>>
+
+    @Insert
+    suspend fun insert(log: EventLog)
+
+    @Query("DELETE FROM event_logs")
+    suspend fun clearAll()
 }

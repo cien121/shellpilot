@@ -5,10 +5,11 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Server::class, Snippet::class], version = 1, exportSchema = false)
+@Database(entities = [Server::class, Snippet::class, EventLog::class], version = 2, exportSchema = false)
 abstract class ShellPilotDatabase : RoomDatabase() {
     abstract fun serverDao(): ServerDao
     abstract fun snippetDao(): SnippetDao
+    abstract fun eventLogDao(): EventLogDao
 
     companion object {
         @Volatile
@@ -20,7 +21,9 @@ abstract class ShellPilotDatabase : RoomDatabase() {
                     context.applicationContext,
                     ShellPilotDatabase::class.java,
                     "shellpilot.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration()
+                    .build().also { INSTANCE = it }
             }
     }
 }
