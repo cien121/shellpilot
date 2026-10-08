@@ -93,12 +93,20 @@ class AnsiTerminal(private val maxLines: Int = 2000, private val cols: Int = 80)
     private var fg: Color = DEFAULT_FG
     private var bg: Color = NO_BG
     private var bold = false
+    /**
+     * 反显标志（SGR 7 开 / SGR 27 关）。
+     * 之前是直接 swap fg/bg 的破坏性写法：连着两个 SGR 7 会把 bg 从透明
+     * 变成不透明黑（截图里的黑块残留），且没有 SGR 27 时反显关不掉。
+     * 改标志位后渲染时换色，开/关可逆。
+     */
+    private var reverse = false
 
     private var sRow = 0
     private var sCol = 0
     private var sFg: Color = DEFAULT_FG
     private var sBg: Color = NO_BG
     private var sBold = false
+    private var sReverse = false
 
     private var state = PState.GROUND
     private val csiParams = StringBuilder()
@@ -122,7 +130,15 @@ class AnsiTerminal(private val maxLines: Int = 2000, private val cols: Int = 80)
         .onMalformedInput(CodingErrorAction.REPLACE)
         .onUnmappableCharacter(CodingErrorAction.REPLACE)
 
-    private fun curStyle() = CellStyle(fg, bg, bold)
+    private fun curStyle(): CellStyle {
+        // 反显时渲染层换色：fg/bg 互换；bg 为透明时前景用黑色，保证可读。
+        // 不破坏 fg/bg 本体，SGR 27 / SGR 0 可干净关掉。
+        return if (reverse) {
+            CellStyle(if (bg == NO_BG) Color.Black else bg, fg, bold)
+        } else {
+            CellStyle(fg, bg, bold)
+        }
+    }
     private fun defaultCell() = CellStyle(DEFAULT_FG, NO_BG, false)
 
     /** 线程安全：解析与快照共用一把锁。 */
@@ -290,18 +306,18 @@ class AnsiTerminal(private val maxLines: Int = 2000, private val cols: Int = 80)
     private var sWrapPending = false
 
     private fun saveCursor() {
-        sRow = row; sCol = col; sFg = fg; sBg = bg; sBold = bold
+        sRow = row; sCol = col; sFg = fg; sBg = bg; sBold = bold; sReverse = reverse
         sWrapPending = wrapPending
     }
 
     private fun restoreCursor() {
-        row = sRow; col = sCol; fg = sFg; bg = sBg; bold = sBold
+        row = sRow; col = sCol; fg = sFg; bg = sBg; bold = sBold; reverse = sReverse
         wrapPending = sWrapPending
         ensureRow(row)
     }
 
     private fun resetStyle() {
-        fg = DEFAULT_FG; bg = NO_BG; bold = false
+        fg = DEFAULT_FG; bg = NO_BG; bold = false; reverse = false
     }
 
     private fun resetScreen() {
@@ -384,11 +400,8 @@ class AnsiTerminal(private val maxLines: Int = 2000, private val cols: Int = 80)
                 0 -> resetStyle()
                 1 -> bold = true
                 22 -> bold = false
-                7 -> {
-                    val t = fg
-                    fg = if (bg == NO_BG) Color.Black else bg
-                    bg = t
-                }
+                7 -> reverse = true
+                27 -> reverse = false
                 in 30..37 -> fg = xtermColor(p - 30)
                 in 90..97 -> fg = xtermColor(p - 90 + 8)
                 in 40..47 -> bg = xtermColor(p - 40)

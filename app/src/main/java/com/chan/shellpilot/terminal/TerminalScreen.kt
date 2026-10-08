@@ -23,7 +23,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -186,11 +185,6 @@ fun TerminalScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
-                actions = {
-                    IconButton(onClick = { focusKeyboard() }) {
-                        Icon(Icons.Filled.Keyboard, contentDescription = "键盘", tint = Color.Gray)
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
@@ -269,6 +263,7 @@ fun TerminalScreen(
                     val clip = clipboardManager.getText()?.text
                     if (!clip.isNullOrEmpty()) handlePaste(clip)
                 },
+                onKeyboard = { focusKeyboard() },
                 onToggleCtrl = {
                     ctrlSticky = !ctrlSticky
                     if (ctrlSticky) altSticky = false
@@ -431,6 +426,7 @@ private fun SpecialKeyRow(
     onToggleAlt: () -> Unit,
     onBytes: (ByteArray) -> Unit,
     onPaste: () -> Unit,
+    onKeyboard: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -453,6 +449,7 @@ private fun SpecialKeyRow(
         TKey("END") { onBytes(escSeq("[F")) }
         TKey("PGUP") { onBytes(escSeq("[5~")) }
         TKey("PGDN") { onBytes(escSeq("[6~")) }
+        TKey("键盘") { onKeyboard() }
     }
 }
 
