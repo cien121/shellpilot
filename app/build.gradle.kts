@@ -79,11 +79,15 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // SSHJ - SSH/SFTP transport (Apache 2.0)
-    implementation("com.hierynomus:sshj:0.41.1")
+    // Exclude its transitive BouncyCastle (we pin our own version below)
+    implementation("com.hierynomus:sshj:0.41.1") {
+        exclude(group = "org.bouncycastle")
+    }
 
     // Full BouncyCastle - Android's built-in BC lacks X25519 etc.
     // Registered first in ShellPilotApp.onCreate via Security.insertProviderAt
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("org.bouncycastle:bcutil-jdk18on:1.86")
 
     // connectbot termlib - terminal emulation (Apache 2.0)
     // TODO: re-enable once a termlib version compatible with compileSdk 34 is available
