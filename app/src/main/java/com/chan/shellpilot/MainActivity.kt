@@ -162,7 +162,19 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     Route.Snippets -> {
-                        SnippetsScreen(onBack = { route = Route.Home })
+                        SnippetsScreen(
+                            onBack = { route = Route.Home },
+                            onRun = { cmd ->
+                                val b = bridge
+                                if (b != null) {
+                                    b.sendLine(cmd)
+                                    route = Route.Terminal
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                        )
                     }
                     Route.EventLog -> {
                         EventLogScreen(onBack = { route = Route.Home })
