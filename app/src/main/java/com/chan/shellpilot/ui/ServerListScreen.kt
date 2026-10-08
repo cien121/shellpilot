@@ -5,6 +5,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -37,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,9 +48,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chan.shellpilot.data.Server
+import kotlinx.coroutines.launch
 
 /**
- * 服务器列表：点一下连接（输密码），长按删除，右下角 + 添加。
+ * 服务器列表：点一下连接（记住了密码则直连），长按出操作菜单，右下角 + 添加。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -62,11 +66,14 @@ fun ShellPilotApp(
     var showAdd by remember { mutableStateOf(false) }
     var pendingServer by remember { mutableStateOf<Server?>(null) }
     var pendingPassword by remember { mutableStateOf("") }
+    var rememberInPrompt by remember { mutableStateOf(true) }
+    var serverMenuTarget by remember { mutableStateOf<Server?>(null) }
     var serverToDelete by remember { mutableStateOf<Server?>(null) }
     // 刚添加的服务器附带的密码（添加时输入的），用于免二次输入直连
     var justAddedPassword by remember { mutableStateOf<Pair<Long, String>?>(null) }
 
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     // 连接成功 → 跳终端页
     LaunchedEffect(connectState) {
@@ -136,18 +143,25 @@ fun ShellPilotApp(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .combinedClickable(
                                 onClick = {
-                                    // 刚添加的带密码直连，否则弹密码框
+                                    // 刚添加的带密码直连；否则查记住的密码，有则直连，无才弹密码框
                                     val saved = justAddedPassword
                                     if (saved != null && saved.first == server.id) {
                                         justAddedPassword = null
                                         pendingServer = server
                                         terminalViewModel.connect(server, saved.second)
                                     } else {
-                                        pendingServer = server
-                                        pendingPassword = ""
+                                        val stored = listViewModel.storedPassword(server.id)
+                                        if (stored != null) {
+                                            pendingServer = server
+                                            terminalViewModel.connect(server, stored)
+                                        } else {
+                                            pendingServer = server
+                                            pendingPassword = ""
+                                            rememberInPrompt = true
+                                        }
                                     }
                                 },
-                                onLongClick = { serverToDelete = server },
+                                onLongClick = { serverMenuTarget = server },
                             ),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surface
@@ -176,9 +190,9 @@ fun ShellPilotApp(
     if (showAdd) {
         AddServerDialog(
             onDismiss = { showAdd = false },
-            onConfirm = { name, host, port, username, password ->
+            onConfirm = { name, host, port, username, password, remember ->
                 showAdd = false
-                listViewModel.addServer(name, host, port, username) { server ->
+                listViewModel.addServer(name, host, port, username, password, remember) { server ->
                     justAddedPassword = server.id to password
                     pendingServer = server
                     terminalViewModel.connect(server, password)
@@ -187,7 +201,7 @@ fun ShellPilotApp(
         )
     }
 
-    // 连接时输密码（非刚添加的场景）
+    // 连接时输密码（没记住的场景）
     val target = pendingServer
     if (target != null && connectState !is ConnectState.Connecting
         && connectState !is ConnectState.Connected
@@ -199,20 +213,51 @@ fun ShellPilotApp(
                 server = target,
                 password = pendingPassword,
                 onPasswordChange = { pendingPassword = it },
+                rememberPassword = rememberInPrompt,
+                onRememberChange = { rememberInPrompt = it },
                 onDismiss = { pendingServer = null },
                 onConfirm = {
+                    if (rememberInPrompt) {
+                        listViewModel.savePassword(target.id, pendingPassword)
+                    }
                     terminalViewModel.connect(target, pendingPassword)
                 },
             )
         }
     }
 
-    // 长按删除确认
+    // 长按操作菜单：清除已存密码 / 删除服务器
+    serverMenuTarget?.let { s ->
+        val hasPw = listViewModel.hasStoredPassword(s.id)
+        AlertDialog(
+            onDismissRequest = { serverMenuTarget = null },
+            title = { Text(s.name) },
+            text = { Text(if (hasPw) "已保存该服务器的密码" else "选择操作") },
+            confirmButton = {
+                TextButton(onClick = {
+                    serverMenuTarget = null
+                    serverToDelete = s
+                }) { Text("删除服务器") }
+            },
+            dismissButton = {
+                if (hasPw) {
+                    TextButton(onClick = {
+                        listViewModel.clearStoredPassword(s)
+                        serverMenuTarget = null
+                        scope.launch { snackbar.showSnackbar("已清除 ${s.name} 的已存密码") }
+                    }) { Text("清除已存密码") }
+                }
+                TextButton(onClick = { serverMenuTarget = null }) { Text("取消") }
+            },
+        )
+    }
+
+    // 删除确认
     serverToDelete?.let { s ->
         AlertDialog(
             onDismissRequest = { serverToDelete = null },
             title = { Text("删除服务器") },
-            text = { Text("确定删除 ${s.name} 吗？") },
+            text = { Text("确定删除 ${s.name} 吗？已存密码会一并清除。") },
             confirmButton = {
                 TextButton(onClick = {
                     listViewModel.deleteServer(s)
@@ -231,6 +276,8 @@ private fun PasswordPromptDialog(
     server: Server,
     password: String,
     onPasswordChange: (String) -> Unit,
+    rememberPassword: Boolean,
+    onRememberChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -254,6 +301,16 @@ private fun PasswordPromptDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Checkbox(
+                        checked = rememberPassword,
+                        onCheckedChange = onRememberChange,
+                    )
+                    Text("记住密码")
+                }
             }
         },
         confirmButton = {
