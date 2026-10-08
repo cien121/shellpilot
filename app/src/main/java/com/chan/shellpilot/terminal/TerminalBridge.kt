@@ -1,91 +1,42 @@
 package com.chan.shellpilot.terminal
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.chan.shellpilot.ssh.ShellSession
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import org.connectbot.terminal.Terminal
-import org.connectbot.terminal.TerminalEmulator
-import org.connectbot.terminal.TerminalEmulatorFactory
 import java.io.Closeable
 
 /**
- * Binds a [ShellSession] (SSHJ) to a termlib [TerminalEmulator]:
- *  - remote output  -> emulator.writeInput()  (display)
- *  - local keyboard -> shell input stream      (via onKeyboardInput)
+ * STUB: termlib is disabled until a version compatible with compileSdk 34 exists
+ * (0.2.1/0.3.11 require compileSdk 37). This stub keeps the skeleton compiling;
+ * real terminal emulation wiring lands in a later milestone.
  *
- * TODO: resize handling (send SIGWINCH / pty resize on layout change),
- *       scrollback persistence, selection toolbar actions.
+ * TODO: re-enable termlib and restore full TerminalBridge implementation.
  */
 class TerminalBridge(
     private val shell: ShellSession,
     private val scope: CoroutineScope,
 ) : Closeable {
-
-    val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
-        initialRows = 24,
-        initialCols = 80,
-        defaultForeground = Color.White,
-        defaultBackground = Color.Black,
-        onKeyboardInput = { data ->
-            runCatching {
-                shell.input.write(data)
-                shell.input.flush()
-            }
-        },
-    )
-
-    private var pumpJob: Job? = null
-
-    fun start() {
-        pumpJob = scope.launch(Dispatchers.IO) {
-            val buf = ByteArray(8192)
-            try {
-                while (true) {
-                    val n = shell.output.read(buf)
-                    if (n < 0) break
-                    emulator.writeInput(buf.copyOf(n))
-                }
-            } catch (_: Exception) {
-                // session closed; stop pumping
-            }
-        }
-    }
-
-    override fun close() {
-        pumpJob?.cancel()
-        runCatching { shell.close() }
-    }
+    fun start() { /* stub */ }
+    override fun close() { runCatching { shell.close() } }
 }
 
-/** Compose screen hosting the terminal. Placeholder until session wiring lands. */
+/** Compose screen hosting the terminal. Placeholder until termlib is re-enabled. */
 @Composable
 fun TerminalScreen(
     bridge: TerminalBridge?,
     modifier: Modifier = Modifier,
 ) {
-    val emulator = bridge?.emulator ?: remember {
-        // Standalone placeholder emulator so the screen renders without a connection.
-        TerminalEmulatorFactory.create(
-            initialRows = 24,
-            initialCols = 80,
-            defaultForeground = Color.White,
-            defaultBackground = Color.Black,
-            onKeyboardInput = {},
-        )
+    Box(
+        modifier = modifier.fillMaxSize().background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("终端占位（termlib 待接入）", color = Color.Gray)
     }
-    DisposableEffect(bridge) {
-        bridge?.start()
-        onDispose { }
-    }
-    Terminal(
-        terminalEmulator = emulator,
-        modifier = modifier,
-    )
 }

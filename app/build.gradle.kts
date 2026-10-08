@@ -86,7 +86,9 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 
     // connectbot termlib - terminal emulation (Apache 2.0)
-    implementation("org.connectbot:termlib:0.2.1")
+    // TODO: re-enable once a termlib version compatible with compileSdk 34 is available
+    // (0.2.1/0.3.11 require compileSdk 37). TerminalBridge is stubbed meanwhile.
+    // implementation("org.connectbot:termlib:0.2.1")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
