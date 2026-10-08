@@ -14,13 +14,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Keyboard
@@ -57,7 +56,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -77,6 +75,9 @@ private fun escSeq(s: String): ByteArray =
 /**
  * 真终端：点按终端直接输入（隐藏输入框），长按选择复制，
  * ANSI 颜色/清屏/光标，底部特殊键盘行。黑色背景、等宽字体。
+ *
+ * 渲染用 LazyColumn 按行显示：打字时只有最后一行重排，
+ * 不再全量重排 500 行——解决输入延迟。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,9 +87,10 @@ fun TerminalScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val version by bridge?.version?.collectAsState() ?: remember { mutableStateOf(0L) }
+    // 行快照由 TerminalBridge 在 IO 线程构建好后发布，UI 只做增量重排
+    val lines by bridge?.lines?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
     val connected by bridge?.connected?.collectAsState() ?: remember { mutableStateOf(false) }
-    val scrollState = rememberScrollState()
+    val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -96,10 +98,7 @@ fun TerminalScreen(
     var ctrlSticky by remember { mutableStateOf(false) }
     var altSticky by remember { mutableStateOf(false) }
 
-    val (snapshot, cursorOffset) = remember(version) {
-        bridge?.snapshotWithCursor() ?: (AnnotatedString("") to 0)
-    }
-    // 块状光标 500ms 闪烁：只切换 overlay 透明度，不重建文本
+    // 块状光标 500ms 闪烁：只重组光标所在行，不重建文本
     var cursorVisible by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -134,13 +133,24 @@ fun TerminalScreen(
         }
     }
 
-    // 跟踪用户是否滚到底：到底才自动跟随新输出
-    LaunchedEffect(Unit) {
-        snapshotFlow { scrollState.value to scrollState.maxValue }
-            .collect { (v, max) -> stickToBottom = max - v < 80 }
+    // 跟踪用户是否在底部：在底部才自动跟随新输出
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val total = info.totalItemsCount
+            if (total == 0) 0 else {
+                val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                total - 1 - lastVisible
+            }
+        }.collect { distanceFromEnd ->
+            stickToBottom = distanceFromEnd < 3
+        }
     }
-    LaunchedEffect(version) {
-        if (stickToBottom) scrollState.scrollTo(scrollState.maxValue)
+    // 新输出时，若在底部则滚到底
+    LaunchedEffect(lines.size) {
+        if (stickToBottom && lines.isNotEmpty()) {
+            listState.scrollToItem(lines.size - 1)
+        }
     }
     // 进终端自动弹键盘
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
@@ -177,9 +187,6 @@ fun TerminalScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { focusKeyboard() })
-                    }
             ) {
                 if (bridge == null) {
                     Text(
@@ -189,12 +196,31 @@ fun TerminalScreen(
                         modifier = Modifier.padding(16.dp),
                     )
                 } else {
-                    TerminalTextWithCursor(
-                        snapshot = snapshot,
-                        cursorOffset = cursorOffset,
-                        cursorVisible = cursorVisible,
-                        scrollState = scrollState,
-                    )
+                    SelectionContainer(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                                .pointerInput(Unit) {
+                                    detectTapGestures(onTap = { focusKeyboard() })
+                                },
+                        ) {
+                            items(
+                                count = lines.size,
+                                key = { idx -> lines[idx].id },
+                            ) { idx ->
+                                val line = lines[idx]
+                                TerminalLineItem(
+                                    line = line,
+                                    // 只有光标行才订阅闪烁状态，其他行不受影响
+                                    cursorVisible = if (line.isCursorRow) cursorVisible else false,
+                                )
+                            }
+                        }
+                    }
                 }
                 // 隐藏输入框：承载软键盘输入，字符直发 shell（pty 回显）。
                 // 独立 composable，避免每次按键重组整个终端界面。
@@ -231,38 +257,31 @@ fun TerminalScreen(
 }
 
 /**
- * 终端文本 + 块状光标覆盖层。
- * 光标用 TextLayoutResult 定位，闪烁只切换透明度，不触发文本重建。
+ * 单行终端文本 + 光标（如果光标在该行）。
+ * LazyColumn 按行复用：打字只重组最后一行。
  */
 @Composable
-private fun TerminalTextWithCursor(
-    snapshot: AnnotatedString,
-    cursorOffset: Int,
+private fun TerminalLineItem(
+    line: LineSnapshot,
     cursorVisible: Boolean,
-    scrollState: ScrollState,
 ) {
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     val density = LocalDensity.current
-    SelectionContainer(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(8.dp)
-    ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = snapshot,
-                color = Color(0xFFE8E8E8),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.fillMaxWidth(),
-                onTextLayout = { layoutResult = it },
-            )
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = line.text,
+            color = Color(0xFFE8E8E8),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.fillMaxWidth(),
+            onTextLayout = { layoutResult = it },
+        )
+        if (line.isCursorRow) {
             CursorBlock(
                 layoutResult = layoutResult,
-                offset = cursorOffset,
-                textLength = snapshot.length,
+                offset = line.cursorCol.coerceIn(0, line.text.length),
+                textLength = line.text.length,
                 visible = cursorVisible,
                 density = density,
             )

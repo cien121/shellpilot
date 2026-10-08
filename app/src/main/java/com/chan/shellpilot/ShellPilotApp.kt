@@ -2,12 +2,15 @@ package com.chan.shellpilot
 
 import android.app.Application
 import com.chan.shellpilot.data.Server
+import com.chan.shellpilot.ssh.PasswordStore
 import com.chan.shellpilot.ssh.ShellSession
 import com.chan.shellpilot.ssh.SshConnectionManager
 import com.chan.shellpilot.terminal.TerminalBridge
+import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
 
@@ -40,5 +43,14 @@ class ShellPilotApp : Application() {
         // Remove the crippled Android BC first to avoid confusion, then insert ours at #1.
         Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
         Security.insertProviderAt(BouncyCastleProvider(), 1)
+        // 预热密码库（后台线程）：EncryptedSharedPreferences 首次初始化要走
+        // Android Keystore，提前做掉，点"连接"时不再卡主线程。
+        appScope.launch(Dispatchers.IO) {
+            runCatching {
+                PasswordStore(this@ShellPilotApp).warmUp()
+            }.onFailure {
+                SpLog.e("ShellPilotApp", "password store warmup failed: ${it.message}")
+            }
+        }
     }
 }

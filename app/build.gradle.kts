@@ -13,8 +13,8 @@ android {
         applicationId = "com.chan.shellpilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.3.1"
+        versionCode = 6
+        versionName = "0.3.2"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -30,6 +30,18 @@ android {
         }
     }
 
+    // 固定 debug 签名：keystore 提交在仓库里，每次构建签名一致，
+    // 用户才能覆盖升级安装（否则 runner 每次生成不同的 debug.keystore，
+    // Android 会报签名不一致拒绝安装）。
+    signingConfigs {
+        create("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -40,6 +52,7 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

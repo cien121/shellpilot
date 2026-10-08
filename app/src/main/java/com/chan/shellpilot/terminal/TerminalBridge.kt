@@ -34,6 +34,14 @@ class TerminalBridge(
     /** 输出有更新时递增（节流约 8 次/秒，避免高频 recompose）。 */
     val version: StateFlow<Long> = _version.asStateFlow()
 
+    private val _lines = MutableStateFlow<List<LineSnapshot>>(emptyList())
+    /**
+     * 行级快照（LazyColumn 按行渲染用）。
+     * 在 IO 线程构建好 AnnotatedString 后发布，Compose 只做收集，
+     * 不再在主线程全量重建 500 行文本——解决输入延迟。
+     */
+    val lines: StateFlow<List<LineSnapshot>> = _lines.asStateFlow()
+
     private val _connected = MutableStateFlow(true)
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
@@ -73,7 +81,15 @@ class TerminalBridge(
                     val now = SystemClock.uptimeMillis()
                     if (now - lastEmit >= 120) {
                         lastEmit = now
-                        withContext(Dispatchers.Main) { _version.value++ }
+                        // 行快照在 IO 线程构建（AnnotatedString 是纯数据类，
+                        // 不需要主线程），发布后 UI 线程只做增量重排。
+                        val snap = synchronized(lock) {
+                            term.snapshotLines(MAX_DISPLAY_LINES)
+                        }
+                        withContext(Dispatchers.Main) {
+                            _lines.value = snap
+                            _version.value++
+                        }
                     }
                 }
             } catch (e: Exception) {

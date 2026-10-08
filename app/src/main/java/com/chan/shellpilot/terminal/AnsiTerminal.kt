@@ -28,10 +28,21 @@ private val NO_BG = Color.Transparent
 
 private data class CellStyle(val fg: Color, val bg: Color, val bold: Boolean)
 
-private class StyledLine {
+private class StyledLine(val id: Long) {
     val text = StringBuilder()
     val styles = ArrayList<CellStyle>()
 }
+
+/**
+ * 行级快照：给 LazyColumn 按行渲染用。
+ * [id] 是行的稳定标识（LazyColumn 的 key），内容变化时同 id 复用。
+ */
+data class LineSnapshot(
+    val id: Long,
+    val text: AnnotatedString,
+    val isCursorRow: Boolean,
+    val cursorCol: Int,
+)
 
 private fun xtermColor(n: Int): Color {
     val std = longArrayOf(
@@ -90,6 +101,10 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     private var state = PState.GROUND
     private val csiParams = StringBuilder()
     private var csiPrivate = false
+
+    /** 行 ID 计数器：每创建一个 StyledLine 分配一个，保证 LazyColumn key 稳定。 */
+    private var nextLineId = 0L
+    private fun newStyledLine() = StyledLine(nextLineId++)
 
     private val decoder = Charsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPLACE)
@@ -155,10 +170,63 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
         return text to off
     }
 
+    /**
+     * 行级快照（给 LazyColumn 按行渲染）：只取末尾 [maxDisplayLines] 行，
+     * 每行独立 AnnotatedString。打字时只有最后一行变化，LazyColumn 仅重排该行，
+     * 不再全量重排 500 行——解决输入延迟。
+     *
+     * 空行用零宽空格占位，保证每行都有行高。
+     * 注意：AnnotatedString 是纯数据类，可在后台线程构建。
+     */
+    @Synchronized
+    fun snapshotLines(maxDisplayLines: Int = 500): List<LineSnapshot> {
+        val total = lines.size
+        if (total == 0) return emptyList()
+        val start = maxOf(0, total - maxDisplayLines)
+        val cursorRow = row.coerceIn(0, total - 1)
+        return ArrayList<LineSnapshot>(total - start).apply {
+            for (li in start until total) {
+                val line = lines[li]
+                val text = buildAnnotatedString {
+                    val t = line.text
+                    if (t.isEmpty()) {
+                        // 零宽空格：空行保持行高，不可见
+                        append("\u200B")
+                    } else {
+                        var i = 0
+                        while (i < t.length) {
+                            val st = line.styles[i]
+                            var j = i + 1
+                            while (j < t.length && line.styles[j] == st) j++
+                            pushStyle(
+                                SpanStyle(
+                                    color = st.fg,
+                                    background = st.bg,
+                                    fontWeight = if (st.bold) FontWeight.Bold else null,
+                                )
+                            )
+                            append(t.substring(i, j))
+                            pop()
+                            i = j
+                        }
+                    }
+                }
+                add(
+                    LineSnapshot(
+                        id = line.id,
+                        text = text,
+                        isCursorRow = li == cursorRow,
+                        cursorCol = if (li == cursorRow) col else 0,
+                    )
+                )
+            }
+        }
+    }
+
     // ---------- 光标与行操作 ----------
 
     private fun ensureRow(r: Int) {
-        while (lines.size <= r) lines.add(StyledLine())
+        while (lines.size <= r) lines.add(newStyledLine())
     }
 
     private fun trim() {
@@ -232,7 +300,7 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
 
     private fun eraseWholeLine() {
         if (row >= lines.size) return
-        lines[row] = StyledLine()
+        lines[row] = newStyledLine()
     }
 
     private fun insertSpaces(n: Int) {
@@ -351,13 +419,13 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
                 2 -> eraseWholeLine()
                 else -> eraseLineTail()
             }
-            'L' -> { repeat(n(0)) { lines.add(row.coerceAtMost(lines.size), StyledLine()) }; trim() }
+            'L' -> { repeat(n(0)) { lines.add(row.coerceAtMost(lines.size), newStyledLine()) }; trim() }
             'M' -> repeat(n(0)) { if (row < lines.size) lines.removeAt(row) }
             '@' -> insertSpaces(n(0))
             'P' -> deleteChars(n(0))
             'X' -> eraseChars(n(0))
             'S' -> { repeat(n(0)) { if (row < lines.size) lines.removeAt(row) }; trim() }
-            'T' -> { repeat(n(0)) { lines.add(row.coerceAtMost(lines.size), StyledLine()) }; trim() }
+            'T' -> { repeat(n(0)) { lines.add(row.coerceAtMost(lines.size), newStyledLine()) }; trim() }
             's' -> saveCursor()
             'u' -> restoreCursor()
             // 'r' 滚屏区域 / 'c' / 'n' / 't' / 'h' / 'l'：忽略

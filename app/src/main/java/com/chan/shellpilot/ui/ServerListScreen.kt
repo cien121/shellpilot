@@ -143,21 +143,25 @@ fun ShellPilotApp(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .combinedClickable(
                                 onClick = {
-                                    // 刚添加的带密码直连；否则查记住的密码，有则直连，无才弹密码框
-                                    val saved = justAddedPassword
-                                    if (saved != null && saved.first == server.id) {
-                                        justAddedPassword = null
-                                        pendingServer = server
-                                        terminalViewModel.connect(server, saved.second)
-                                    } else {
-                                        val stored = listViewModel.storedPassword(server.id)
-                                        if (stored != null) {
+                                    scope.launch {
+                                        // 刚添加的带密码直连；否则查记住的密码（挂起走 IO，
+                                        // 避免 EncryptedSharedPreferences 初始化卡主线程），
+                                        // 有则直连，无才弹密码框
+                                        val saved = justAddedPassword
+                                        if (saved != null && saved.first == server.id) {
+                                            justAddedPassword = null
                                             pendingServer = server
-                                            terminalViewModel.connect(server, stored)
+                                            terminalViewModel.connect(server, saved.second)
                                         } else {
-                                            pendingServer = server
-                                            pendingPassword = ""
-                                            rememberInPrompt = true
+                                            val stored = listViewModel.storedPassword(server.id)
+                                            if (stored != null) {
+                                                pendingServer = server
+                                                terminalViewModel.connect(server, stored)
+                                            } else {
+                                                pendingServer = server
+                                                pendingPassword = ""
+                                                rememberInPrompt = true
+                                            }
                                         }
                                     }
                                 },
@@ -227,12 +231,16 @@ fun ShellPilotApp(
     }
 
     // 长按操作菜单：清除已存密码 / 删除服务器
+    // hasStoredPassword 走 IO 异步加载，避免 Keystore 初始化卡住菜单弹出
     serverMenuTarget?.let { s ->
-        val hasPw = listViewModel.hasStoredPassword(s.id)
+        var hasPw by remember(s.id) { mutableStateOf<Boolean?>(null) }
+        LaunchedEffect(s.id) {
+            hasPw = listViewModel.hasStoredPassword(s.id)
+        }
         AlertDialog(
             onDismissRequest = { serverMenuTarget = null },
             title = { Text(s.name) },
-            text = { Text(if (hasPw) "已保存该服务器的密码" else "选择操作") },
+            text = { Text(if (hasPw == true) "已保存该服务器的密码" else "选择操作") },
             confirmButton = {
                 TextButton(onClick = {
                     serverMenuTarget = null
@@ -240,7 +248,7 @@ fun ShellPilotApp(
                 }) { Text("删除服务器") }
             },
             dismissButton = {
-                if (hasPw) {
+                if (hasPw == true) {
                     TextButton(onClick = {
                         listViewModel.clearStoredPassword(s)
                         serverMenuTarget = null

@@ -53,16 +53,18 @@ class ServerListViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 记住的密码（没有记住返回 null）。 */
-    fun storedPassword(serverId: Long): String? = passwordStore.get(serverId)
+    /** 记住的密码（没有记住返回 null）。suspend：走 IO 线程，避免 Keystore 初始化卡主线程。 */
+    suspend fun storedPassword(serverId: Long): String? = passwordStore.get(serverId)
 
-    fun hasStoredPassword(serverId: Long): Boolean = passwordStore.has(serverId)
+    suspend fun hasStoredPassword(serverId: Long): Boolean = passwordStore.has(serverId)
 
     fun savePassword(serverId: Long, password: String) {
-        if (password.isNotEmpty()) passwordStore.save(serverId, password)
+        if (password.isNotEmpty()) {
+            viewModelScope.launch { passwordStore.save(serverId, password) }
+        }
     }
 
     fun clearStoredPassword(server: Server) {
-        passwordStore.clear(server.id)
+        viewModelScope.launch { passwordStore.clear(server.id) }
     }
 }
