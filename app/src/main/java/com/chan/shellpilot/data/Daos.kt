@@ -31,7 +31,7 @@ interface SnippetDao {
     @Query("SELECT * FROM snippets ORDER BY sortOrder ASC, id ASC")
     fun observeAll(): Flow<List<Snippet>>
 
-    @Query("SELECT * FROM snippets WHERE group = :group ORDER BY sortOrder ASC, id ASC")
+    @Query("SELECT * FROM snippets WHERE `group` = :group ORDER BY sortOrder ASC, id ASC")
     fun observeByGroup(group: String): Flow<List<Snippet>>
 
     @Query("SELECT * FROM snippets WHERE autoRunOnConnect = 1 ORDER BY sortOrder ASC")
