@@ -41,6 +41,18 @@ class TerminalBridge(
     /** 当前终端画面快照（主线程调用）。 */
     fun snapshot(): AnnotatedString = synchronized(lock) { term.snapshot() }
 
+    /**
+     * 显示快照 + 光标偏移（单次同步，保证一致）。
+     * 只渲染末尾 [MAX_DISPLAY_LINES] 行，避免 `cat` 大文件时全量 2000 行重排卡顿。
+     */
+    fun snapshotWithCursor(): Pair<AnnotatedString, Int> =
+        synchronized(lock) { term.snapshotWithCursor(MAX_DISPLAY_LINES) }
+
+    companion object {
+        /** 单次渲染的最大行数：控制 Compose Text 布局开销。 */
+        const val MAX_DISPLAY_LINES = 500
+    }
+
     fun start() {
         pumpJob = scope.launch(Dispatchers.IO) {
             val buf = ByteArray(8192)

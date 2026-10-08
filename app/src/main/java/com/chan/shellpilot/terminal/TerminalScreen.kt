@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -48,13 +50,17 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 private val ESC = 0x1B.toByte()
 private val DEL = 0x7F.toByte()
@@ -83,11 +89,17 @@ fun TerminalScreen(
     var stickToBottom by remember { mutableStateOf(true) }
     var ctrlSticky by remember { mutableStateOf(false) }
     var altSticky by remember { mutableStateOf(false) }
-    // 哨兵空格：保证退格键总有字符可删，从而能被 onValueChange 捕获
-    var hidden by remember { mutableStateOf(" ") }
 
-    val snapshot: AnnotatedString = remember(version) {
-        bridge?.snapshot() ?: AnnotatedString("")
+    val (snapshot, cursorOffset) = remember(version) {
+        bridge?.snapshotWithCursor() ?: (AnnotatedString("") to 0)
+    }
+    // 块状光标 500ms 闪烁：只切换 overlay 透明度，不重建文本
+    var cursorVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(500)
+            cursorVisible = !cursorVisible
+        }
     }
 
     fun sendBytes(b: ByteArray) = bridge?.sendBytes(b) ?: Unit
@@ -171,46 +183,20 @@ fun TerminalScreen(
                         modifier = Modifier.padding(16.dp),
                     )
                 } else {
-                    SelectionContainer(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(scrollState)
-                            .padding(8.dp)
-                    ) {
-                        Text(
-                            text = snapshot,
-                            color = Color(0xFFE8E8E8),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp,
-                        )
-                    }
+                    TerminalTextWithCursor(
+                        snapshot = snapshot,
+                        cursorOffset = cursorOffset,
+                        cursorVisible = cursorVisible,
+                        scrollState = scrollState,
+                    )
                 }
-                // 隐藏输入框：承载软键盘输入，字符直发 shell（pty 回显）
-                BasicTextField(
-                    value = hidden,
-                    onValueChange = { new ->
-                        val old = hidden
-                        if (new.length > old.length) {
-                            for (c in new.substring(old.length)) handleChar(c)
-                        } else if (new.length < old.length) {
-                            repeat(old.length - new.length) { sendBytes(byteArrayOf(DEL)) }
-                        }
-                        hidden = " "
-                    },
-                    modifier = Modifier
-                        .size(1.dp)
-                        .alpha(0f)
-                        .focusRequester(focusRequester),
-                    keyboardOptions = KeyboardOptions(
-                        autoCorrect = false,
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { sendText("\r") }
-                    ),
-                    cursorBrush = SolidColor(Color.Transparent),
+                // 隐藏输入框：承载软键盘输入，字符直发 shell（pty 回显）。
+                // 独立 composable，避免每次按键重组整个终端界面。
+                HiddenInputField(
+                    focusRequester = focusRequester,
+                    onChar = ::handleChar,
+                    onDelete = { sendBytes(byteArrayOf(DEL)) },
+                    onDone = { sendText("\r") },
                 )
             }
             if (bridge != null && !connected) {
@@ -236,6 +222,127 @@ fun TerminalScreen(
             )
         }
     }
+}
+
+/**
+ * 终端文本 + 块状光标覆盖层。
+ * 光标用 TextLayoutResult 定位，闪烁只切换透明度，不触发文本重建。
+ */
+@Composable
+private fun TerminalTextWithCursor(
+    snapshot: AnnotatedString,
+    cursorOffset: Int,
+    cursorVisible: Boolean,
+    scrollState: ScrollState,
+) {
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val density = LocalDensity.current
+    SelectionContainer(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(8.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = snapshot,
+                color = Color(0xFFE8E8E8),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.fillMaxWidth(),
+                onTextLayout = { layoutResult = it },
+            )
+            CursorBlock(
+                layoutResult = layoutResult,
+                offset = cursorOffset,
+                textLength = snapshot.length,
+                visible = cursorVisible,
+                density = density,
+            )
+        }
+    }
+}
+
+/** 块状光标：按字符 advance 精确定位，主题紫色，500ms 闪烁。 */
+@Composable
+private fun CursorBlock(
+    layoutResult: TextLayoutResult?,
+    offset: Int,
+    textLength: Int,
+    visible: Boolean,
+    density: Density,
+) {
+    val lr = layoutResult ?: return
+    val off = offset.coerceIn(0, textLength)
+    val rect = runCatching { lr.getCursorRect(off) }.getOrNull() ?: return
+    // 块宽：取相邻字符的 advance（等宽字体下恒定）；取不到时按字号估算
+    val advancePx = runCatching {
+        when {
+            off < textLength -> lr.getCursorRect(off + 1).left - rect.left
+            off > 0 -> rect.left - lr.getCursorRect(off - 1).left
+            else -> with(density) { 13.sp.toPx() * 0.6f }
+        }
+    }.getOrDefault(with(density) { 13.sp.toPx() * 0.6f }).coerceAtLeast(2f)
+    val lineHpx = rect.height.takeIf { it > 0f }
+        ?: with(density) { 18.sp.toPx() }
+    val xDp: androidx.compose.ui.unit.Dp
+    val yDp: androidx.compose.ui.unit.Dp
+    val wDp: androidx.compose.ui.unit.Dp
+    val hDp: androidx.compose.ui.unit.Dp
+    with(density) {
+        xDp = rect.left.toDp()
+        yDp = rect.top.toDp()
+        wDp = advancePx.toDp()
+        hDp = lineHpx.toDp()
+    }
+    Box(
+        modifier = Modifier
+            .offset(x = xDp, y = yDp)
+            .size(width = wDp, height = hDp)
+            .background(Color(0xFFBB86FC))
+            .alpha(if (visible) 1f else 0f)
+    )
+}
+
+/**
+ * 隐藏输入框（独立 composable）：承载软键盘输入。
+ * 哨兵空格保证退格键总有字符可删，从而能被 onValueChange 捕获。
+ * 独立出来后，按键只重组自己，不重组整个终端界面。
+ */
+@Composable
+private fun HiddenInputField(
+    focusRequester: FocusRequester,
+    onChar: (Char) -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+) {
+    var hidden by remember { mutableStateOf(" ") }
+    BasicTextField(
+        value = hidden,
+        onValueChange = { new ->
+            val old = hidden
+            if (new.length > old.length) {
+                for (c in new.substring(old.length)) onChar(c)
+            } else if (new.length < old.length) {
+                repeat(old.length - new.length) { onDelete() }
+            }
+            hidden = " "
+        },
+        modifier = Modifier
+            .size(1.dp)
+            .alpha(0f)
+            .focusRequester(focusRequester),
+        keyboardOptions = KeyboardOptions(
+            autoCorrect = false,
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(
+            onDone = { onDone() }
+        ),
+        cursorBrush = SolidColor(Color.Transparent),
+    )
 }
 
 @Composable

@@ -110,27 +110,49 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     }
 
     @Synchronized
-    fun snapshot(): AnnotatedString = buildAnnotatedString {
-        for ((li, line) in lines.withIndex()) {
-            var i = 0
-            val t = line.text
-            while (i < t.length) {
-                val st = line.styles[i]
-                var j = i + 1
-                while (j < t.length && line.styles[j] == st) j++
-                pushStyle(
-                    SpanStyle(
-                        color = st.fg,
-                        background = st.bg,
-                        fontWeight = if (st.bold) FontWeight.Bold else null,
+    fun snapshot(): AnnotatedString = snapshotWithCursor(Int.MAX_VALUE).first
+
+    /**
+     * 构建显示快照（只取末尾 [maxDisplayLines] 行，控制 Compose 布局开销），
+     * 并返回光标在快照文本中的字符偏移。单次同步调用，保证文本与偏移一致。
+     */
+    @Synchronized
+    fun snapshotWithCursor(maxDisplayLines: Int = 500): Pair<AnnotatedString, Int> {
+        val total = lines.size
+        val start = maxOf(0, total - maxDisplayLines)
+        val text = buildAnnotatedString {
+            for (li in start until total) {
+                val line = lines[li]
+                var i = 0
+                val t = line.text
+                while (i < t.length) {
+                    val st = line.styles[i]
+                    var j = i + 1
+                    while (j < t.length && line.styles[j] == st) j++
+                    pushStyle(
+                        SpanStyle(
+                            color = st.fg,
+                            background = st.bg,
+                            fontWeight = if (st.bold) FontWeight.Bold else null,
+                        )
                     )
-                )
-                append(t.substring(i, j))
-                pop()
-                i = j
+                    append(t.substring(i, j))
+                    pop()
+                    i = j
+                }
+                if (li != total - 1) append('\n')
             }
-            if (li != lines.lastIndex) append('\n')
         }
+        // 光标在快照中的扁平偏移（行内换行符各占 1）
+        var off = 0
+        val endRow = minOf(row, total - 1)
+        for (li in start until maxOf(start, endRow)) {
+            off += lines[li].text.length + 1
+        }
+        if (total > 0 && endRow >= start) {
+            off += col.coerceIn(0, lines[endRow].text.length)
+        }
+        return text to off
     }
 
     // ---------- 光标与行操作 ----------
