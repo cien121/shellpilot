@@ -436,6 +436,7 @@ private fun SpecialKeyRow(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        TKey("键盘") { onKeyboard() }
         TKey("ESC") { onBytes(byteArrayOf(ESC)) }
         TKey("TAB") { onBytes(byteArrayOf(0x09.toByte())) }
         TToggle("CTRL", ctrlSticky, onToggleCtrl)
@@ -449,7 +450,6 @@ private fun SpecialKeyRow(
         TKey("END") { onBytes(escSeq("[F")) }
         TKey("PGUP") { onBytes(escSeq("[5~")) }
         TKey("PGDN") { onBytes(escSeq("[6~")) }
-        TKey("键盘") { onKeyboard() }
     }
 }
 
