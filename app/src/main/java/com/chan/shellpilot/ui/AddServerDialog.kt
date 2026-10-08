@@ -218,6 +218,7 @@ fun AddServerDialog(
             }
         },
         confirmButton = {
+            val confirmLabel = if (server == null) "保存并连接" else "保存"
             TextButton(
                 onClick = {
                     val port = portText.toIntOrNull()?.takeIf { it in 1..65535 } ?: 22
@@ -237,7 +238,7 @@ fun AddServerDialog(
                     )
                 },
                 enabled = hostOk && userOk && authOk,
-            ) { Text(if (server == null) "保存并连接" else "保存") },
+            ) { Text(confirmLabel) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
