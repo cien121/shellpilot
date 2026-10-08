@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.Closeable
 import java.util.concurrent.TimeUnit
@@ -47,7 +48,8 @@ class SshConnectionManager : Closeable {
         runCatching {
             val ssh = client ?: throw IllegalStateException("not connected")
             val session = ssh.startSession()
-            session.allocateDefaultPTY()
+            // xterm-256color：让服务端发 256 色 ANSI 序列，终端解析器负责渲染
+            session.allocatePTY("xterm-256color", 80, 24, 0, 0, emptyMap<PTYMode, Int>())
             val shell = session.startShell()
             ShellSession(session, shell)
         }
