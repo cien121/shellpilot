@@ -347,7 +347,7 @@ private fun CursorBlock(
         modifier = Modifier
             .offset(x = xDp, y = yDp)
             .size(width = wDp, height = hDp)
-            .background(Color(0xFFBB86FC))
+            .background(Color(0xFF33FF66))
             .alpha(if (visible) 1f else 0f)
     )
 }
