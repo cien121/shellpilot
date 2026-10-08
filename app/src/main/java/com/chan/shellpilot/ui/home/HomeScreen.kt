@@ -1,7 +1,9 @@
 package com.chan.shellpilot.ui.home
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +33,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -225,7 +230,7 @@ private fun ServerCard(
                     .clip(CircleShape),
                 color = MaterialTheme.colorScheme.primary,
             ) {
-                androidx.compose.foundation.layout.Box(
+                Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.fillMaxSize(),
                 ) {
@@ -246,12 +251,11 @@ private fun ServerCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (perf != null) {
-                    Text(
-                        "CPU ${perf.cpuText} · 内存 ${perf.memText}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        MiniGauge("CPU", perf.cpuFraction, perf.cpuText, Color(0xFF4FC3F7))
+                        MiniGauge("内存", perf.memFraction, perf.memText, Color(0xFFBA68C8))
+                    }
                 }
             }
             Icon(
@@ -264,3 +268,49 @@ private fun ServerCard(
     }
 }
 
+
+/** 服务器卡片上的迷你圆形表盘：小圆环 + 中央百分比 + 下方标签。 */
+@Composable
+private fun MiniGauge(
+    label: String,
+    fraction: Float,
+    text: String,
+    color: Color,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier.size(40.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val strokePx = 4.dp.toPx()
+                drawArc(
+                    color = color.copy(alpha = 0.2f),
+                    startAngle = 0f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    style = Stroke(width = strokePx, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = color,
+                    startAngle = -90f,
+                    sweepAngle = 360f * fraction.coerceIn(0f, 1f),
+                    useCenter = false,
+                    style = Stroke(width = strokePx, cap = StrokeCap.Round),
+                )
+            }
+            Text(
+                text = text,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+        }
+        Text(
+            text = label,
+            fontSize = 8.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}

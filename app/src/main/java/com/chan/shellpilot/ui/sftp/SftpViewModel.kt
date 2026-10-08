@@ -46,6 +46,13 @@ data class SftpHostKeyInfo(
     val oldFingerprint: String?,
 )
 
+/** 诊断步骤结果（展示给用户截图）。 */
+data class SftpDiagStep(
+    val name: String,
+    val ok: Boolean,
+    val detail: String,
+)
+
 data class SftpUiState(
     val connecting: Boolean = false, // 正在建连
     val ready: Boolean = false, // sftp 已打开
@@ -54,6 +61,10 @@ data class SftpUiState(
     val loading: Boolean = false,
     val error: String? = null,
     val hostKeyInfo: SftpHostKeyInfo? = null,
+    val execOnly: Boolean = false, // 兼容模式：纯 exec，不走 SFTP 协议
+    val showDiag: Boolean = false, // 诊断弹窗
+    val diagRunning: Boolean = false,
+    val diagSteps: List<SftpDiagStep> = emptyList(),
 )
 
 /**
@@ -131,6 +142,145 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
             connecting = false,
             error = "未确认服务器指纹",
         )
+    }
+
+    /** 切换兼容模式（纯 exec）：SFTP 协议走不通时的降级方案。 */
+    fun setExecOnly(v: Boolean) {
+        _uiState.value = _uiState.value.copy(execOnly = v, showDiag = false)
+        SpLog.i("SFTP", "execOnly mode = $v")
+        val m = mgr
+        viewModelScope.launch {
+            if (m != null && m.isConnected) {
+                openAndList(_uiState.value.path.ifBlank { null })
+            } else {
+                connectAndList()
+            }
+        }
+    }
+
+    fun showDiag() {
+        _uiState.value = _uiState.value.copy(showDiag = true)
+    }
+
+    fun dismissDiag() {
+        _uiState.value = _uiState.value.copy(showDiag = false)
+    }
+
+    /**
+     * 连接诊断：逐步测试建连→exec→会话通道→sftp子系统→SFTP列目录→并发连接，
+     * 每步结果展示在 UI 上，方便截图定位是服务端问题还是客户端问题。
+     */
+    fun runDiagnostics() {
+        val srv = server ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                showDiag = true, diagRunning = true, diagSteps = emptyList(),
+            )
+            val steps = mutableListOf<SftpDiagStep>()
+            fun step(name: String, ok: Boolean, detail: String) {
+                steps += SftpDiagStep(name, ok, detail.take(160))
+                _uiState.value = _uiState.value.copy(diagSteps = steps.toList())
+                SpLog.i("SFTP-diag", "$name -> ${if (ok) "OK" else "FAIL"}: $detail")
+            }
+            fun failOf(e: Throwable): String =
+                "${e.javaClass.simpleName}: ${e.message}".take(140)
+
+            try {
+                // 0. 指纹
+                val stored = knownHosts.get(srv.host, srv.port)
+                if (stored == null) {
+                    step("主机指纹", false, "未记录：请先去终端连接一次并确认指纹")
+                    return@launch
+                }
+                step("主机指纹", true, "已记录")
+
+                // 凭据
+                var password = ""
+                var keyPem: String? = null
+                var keyPass: String? = null
+                try {
+                    if (srv.authType == "key") {
+                        val k = keyStore.get(srv.id)
+                            ?: throw IllegalStateException("未找到私钥")
+                        keyPem = k.first
+                        keyPass = k.second
+                    } else {
+                        password = passwordStore.get(srv.id)
+                            ?: throw IllegalStateException("未记住密码")
+                    }
+                    step("读取凭据", true, if (srv.authType == "key") "私钥" else "密码")
+                } catch (e: Exception) {
+                    step("读取凭据", false, failOf(e))
+                    return@launch
+                }
+
+                val m = SshConnectionManager(getApplication<Application>().cacheDir)
+                try {
+                    // 1. 建连+认证
+                    val r = m.connect(srv, password, keyPem, keyPass, knownHosts)
+                    val cerr = r.exceptionOrNull()
+                    if (r.isFailure) {
+                        step("建连+认证", false, failOf(cerr ?: IllegalStateException("连接失败")))
+                        return@launch
+                    }
+                    step("建连+认证", true, "TCP/握手/认证通过")
+
+                    // 2. exec
+                    try {
+                        val out = m.exec("echo ok").getOrThrow().trim()
+                        step("执行命令", out == "ok", "echo ok → $out")
+                    } catch (e: Exception) {
+                        step("执行命令", false, failOf(e))
+                    }
+
+                    // 3. 会话通道
+                    try {
+                        m.testOpenSession().getOrThrow()
+                        step("会话通道", true, "startSession 成功")
+                    } catch (e: Exception) {
+                        step("会话通道", false, failOf(e) + " —— 可能达到 MaxSessions 上限")
+                    }
+
+                    // 4. sftp 子系统
+                    try {
+                        m.testSftpSubsystem().getOrThrow()
+                        step("SFTP子系统", true, "服务端支持 sftp")
+                    } catch (e: Exception) {
+                        step("SFTP子系统", false, failOf(e) + " —— 服务端可能没开 Subsystem sftp")
+                    }
+
+                    // 5. SFTP 列目录
+                    try {
+                        val c = m.openSftp().getOrThrow()
+                        try {
+                            val n = c.ls(".").size
+                            step("SFTP列目录", true, "家目录 $n 项")
+                        } finally {
+                            runCatching { c.close() }
+                        }
+                    } catch (e: Exception) {
+                        step("SFTP列目录", false, failOf(e))
+                    }
+
+                    // 6. 并发第二连接（第一条还连着）
+                    try {
+                        val m2 = SshConnectionManager(getApplication<Application>().cacheDir)
+                        val r2 = m2.connect(srv, password, keyPem, keyPass, knownHosts)
+                        if (r2.isFailure) throw r2.exceptionOrNull()
+                            ?: IllegalStateException("连接失败")
+                        m2.exec("echo ok").getOrThrow()
+                        step("并发第二连接", true, "服务端允许多连接")
+                        runCatching { m2.close() }
+                    } catch (e: Exception) {
+                        step("并发第二连接", false, failOf(e) + " —— 并发受限也会拖累文件管理")
+                    }
+                } finally {
+                    runCatching { m.close() }
+                }
+            } finally {
+                _uiState.value = _uiState.value.copy(diagRunning = false)
+            }
+        }
     }
 
     /** 建连（处理指纹确认流程），成功后列家目录。 */
@@ -225,10 +375,11 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 列目录：SFTP 优先；任何异常都用 exec 解析兜底。
+     * 列目录：兼容模式直接走 exec；正常模式 SFTP 优先，任何异常都用 exec 解析兜底。
      * 只有 exec 也失败时才抛给 UI。
      */
     private suspend fun listDir(target: String): List<SftpEntry> {
+        if (_uiState.value.execOnly) return execLs(target)
         try {
             return withFreshSftp { c -> sftpLs(c, target) }
         } catch (e: CancellationException) {
@@ -374,75 +525,141 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
-    /** 读取文本文件（>2MB 拒绝）。 */
+    /** 读取文本文件（>2MB 拒绝）。兼容模式走 base64+cat。 */
     suspend fun readText(path: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            withFreshSftp { c ->
-                val attrs = c.stat(path)
-                if (attrs.size > 2 * 1024 * 1024) {
-                    throw IllegalArgumentException("文件过大（>2MB），请下载查看")
+            if (_uiState.value.execOnly) {
+                execReadBytes(path).toString(Charsets.UTF_8)
+            } else {
+                withFreshSftp { c ->
+                    val attrs = c.stat(path)
+                    if (attrs.size > 2 * 1024 * 1024) {
+                        throw IllegalArgumentException("文件过大（>2MB），请下载查看")
+                    }
+                    val rf = c.open(path)
+                    val buf = ByteArrayOutputStream()
+                    rf.RemoteFileInputStream().use { ins -> ins.copyTo(buf) }
+                    buf.toString(Charsets.UTF_8.name())
                 }
-                val rf = c.open(path)
-                val buf = ByteArrayOutputStream()
-                rf.RemoteFileInputStream().use { ins -> ins.copyTo(buf) }
-                buf.toString(Charsets.UTF_8.name())
             }
         }
     }
 
-    /** 保存文本回服务器（覆盖）。 */
+    /** 保存文本回服务器（覆盖）。兼容模式走 base64 分块写入。 */
     suspend fun writeText(path: String, content: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                withFreshSftp { c ->
-                    val rf = c.open(path, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
-                    rf.RemoteFileOutputStream().use { outs ->
-                        content.byteInputStream(Charsets.UTF_8).use { ins ->
-                            ins.copyTo(outs)
+                if (_uiState.value.execOnly) {
+                    execWriteBytes(path, content.toByteArray(Charsets.UTF_8))
+                } else {
+                    withFreshSftp { c ->
+                        val rf = c.open(path, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
+                        rf.RemoteFileOutputStream().use { outs ->
+                            content.byteInputStream(Charsets.UTF_8).use { ins ->
+                                ins.copyTo(outs)
+                            }
                         }
                     }
                 }
-                SpLog.i("SFTP", "saved $path")
+                SpLog.i("SFTP", "saved $path (execOnly=${_uiState.value.execOnly})")
             }
         }
 
-    /** 上传本地文件到当前目录。 */
+    /** 上传本地文件到当前目录。兼容模式走 base64 分块写入。 */
     suspend fun upload(input: InputStream, fileName: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                withFreshSftp { c ->
-                    val remote = joinPath(_uiState.value.path, fileName)
-                    val rf = c.open(remote, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
-                    rf.RemoteFileOutputStream().use { outs ->
-                        input.use { ins -> ins.copyTo(outs) }
+                val bytes = input.use { it.readBytes() }
+                if (_uiState.value.execOnly) {
+                    execWriteBytes(joinPath(_uiState.value.path, fileName), bytes)
+                } else {
+                    withFreshSftp { c ->
+                        val remote = joinPath(_uiState.value.path, fileName)
+                        val rf = c.open(remote, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
+                        rf.RemoteFileOutputStream().use { outs ->
+                            bytes.inputStream().use { ins -> ins.copyTo(outs) }
+                        }
                     }
                 }
                 SpLog.i("SFTP", "uploaded $fileName")
             }.also { refresh() }
         }
 
-    /** 下载到指定输出流。 */
+    /** 下载到指定输出流。兼容模式走 base64 读取。 */
     suspend fun download(entry: SftpEntry, out: OutputStream): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                withFreshSftp { c ->
-                    val rf = c.open(entry.path)
-                    rf.RemoteFileInputStream().use { ins ->
-                        out.use { o -> ins.copyTo(o) }
+                if (_uiState.value.execOnly) {
+                    val bytes = execReadBytes(entry.path, maxBytes = 64 * 1024 * 1024)
+                    out.use { o -> o.write(bytes) }
+                } else {
+                    withFreshSftp { c ->
+                        val rf = c.open(entry.path)
+                        rf.RemoteFileInputStream().use { ins ->
+                            out.use { o -> ins.copyTo(o) }
+                        }
                     }
                 }
                 SpLog.i("SFTP", "downloaded ${entry.path}")
             }
         }
 
-    /** 删除文件或空目录。 */
+    /** 删除文件或空目录。兼容模式走 rm。 */
     suspend fun delete(entry: SftpEntry): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            withFreshSftp { c ->
-                if (entry.isDir) c.rmdir(entry.path) else c.rm(entry.path)
+            if (_uiState.value.execOnly) {
+                val m = mgr ?: throw IllegalStateException("SSH 未连接")
+                val q = shQuote(entry.path)
+                val cmd = if (entry.isDir) "rmdir $q" else "rm -f $q"
+                m.exec(cmd).getOrThrow()
+            } else {
+                withFreshSftp { c ->
+                    if (entry.isDir) c.rmdir(entry.path) else c.rm(entry.path)
+                }
             }
             SpLog.i("SFTP", "deleted ${entry.path}")
         }.also { refresh() }
+    }
+
+    // ---------- 兼容模式：纯 exec 实现 ----------
+
+    /** exec 读文件：base64 编码后本地解码，避免二进制/特殊字符问题。 */
+    private suspend fun execReadBytes(remotePath: String, maxBytes: Long = 2 * 1024 * 1024): ByteArray {
+        val m = mgr ?: throw IllegalStateException("SSH 未连接")
+        val q = shQuote(remotePath)
+        val sizeOut = m.exec("stat -c%s $q 2>/dev/null || wc -c < $q").getOrThrow().trim()
+        val size = sizeOut.toLongOrNull() ?: 0L
+        if (size > maxBytes) throw IllegalArgumentException("文件过大（>2MB），请下载查看")
+        if (size == 0L) return ByteArray(0)
+        val b64 = m.exec("base64 $q 2>/dev/null | tr -d '\\n\\r '").getOrThrow()
+        return try {
+            java.util.Base64.getDecoder().decode(b64.trim())
+        } catch (e: Exception) {
+            throw IllegalStateException("文件解码失败：${e.message}")
+        }
+    }
+
+    /** exec 写文件：base64 分块（每块 48KB原文≈64KB编码），避免单条命令超长。 */
+    private suspend fun execWriteBytes(remotePath: String, bytes: ByteArray) {
+        val m = mgr ?: throw IllegalStateException("SSH 未连接")
+        val q = shQuote(remotePath)
+        val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+        val chunk = 65536 // base64 字符数/块
+        var i = 0
+        var first = true
+        if (b64.isEmpty()) {
+            m.exec(": > $q").getOrThrow() // 空文件：截断
+            return
+        }
+        while (i < b64.length) {
+            val part = b64.substring(i, minOf(i + chunk, b64.length))
+            // base64 字符集无单引号，可直接单引号包裹；printf 比 echo 可靠
+            val op = if (first) ">" else ">>"
+            m.exec("printf '%s' '$part' | base64 -d $op $q").getOrThrow()
+            first = false
+            i += chunk
+        }
+        SpLog.i("SFTP", "exec wrote ${bytes.size} bytes to $remotePath")
     }
 
     private fun setLoading(loading: Boolean) {

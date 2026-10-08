@@ -211,6 +211,34 @@ class SshConnectionManager(
         }
     }
 
+    /** 诊断：只打开一个 session 通道（不开 shell/exec），定位通道层问题。 */
+    suspend fun testOpenSession(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val ssh = client ?: throw IllegalStateException("not connected")
+            val s = ssh.startSession()
+            runCatching { s.close() }
+            SpLog.i("SSH", "diag: session channel ok")
+        }.onFailure {
+            SpLog.e("SSH", "diag: session channel failed: ${it.message}", it)
+        }
+    }
+
+    /** 诊断：打开 session 并请求 sftp 子系统（区分"服务端没开 sftp"和传输层问题）。 */
+    suspend fun testSftpSubsystem(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val ssh = client ?: throw IllegalStateException("not connected")
+            val s = ssh.startSession()
+            try {
+                s.startSubsystem("sftp")
+                SpLog.i("SSH", "diag: sftp subsystem ok")
+            } finally {
+                runCatching { s.close() }
+            }
+        }.onFailure {
+            SpLog.e("SSH", "diag: sftp subsystem failed: ${it.message}", it)
+        }
+    }
+
     val isConnected: Boolean
         get() = client?.isConnected == true && client?.isAuthenticated == true
 

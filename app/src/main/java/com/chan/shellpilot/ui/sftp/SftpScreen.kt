@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
@@ -125,7 +126,8 @@ fun SftpScreen(
             TopAppBar(
                 title = {
                     Text(
-                        state.path.ifBlank { "文件管理" },
+                        (state.path.ifBlank { "文件管理" }) +
+                            if (state.execOnly) " · 兼容模式" else "",
                         fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
                         maxLines = 1,
@@ -142,6 +144,9 @@ fun SftpScreen(
                     }
                     IconButton(onClick = { pickUpload.launch("*/*") }) {
                         Icon(Icons.Filled.Upload, contentDescription = "上传")
+                    }
+                    IconButton(onClick = { vm.showDiag() }) {
+                        Icon(Icons.Filled.BugReport, contentDescription = "连接诊断")
                     }
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "刷新")
@@ -176,11 +181,23 @@ fun SftpScreen(
                 }
                 state.error != null && !state.ready -> {
                     Column(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            state.error!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         Spacer(Modifier.height(12.dp))
+                        if (!state.execOnly) {
+                            TextButton(onClick = { vm.setExecOnly(true) }) {
+                                Text("切换到兼容模式（纯命令）")
+                            }
+                        }
+                        TextButton(onClick = { vm.showDiag() }) { Text("连接诊断") }
                         TextButton(onClick = { vm.refresh() }) { Text("重试") }
                     }
                 }
@@ -274,10 +291,21 @@ fun SftpScreen(
         )
     }
 
+    // 连接诊断弹窗：逐步展示建连→exec→会话通道→sftp子系统→列目录→并发连接的结果
+    if (state.showDiag) {
+        SftpDiagDialog(
+            steps = state.diagSteps,
+            running = state.diagRunning,
+            execOnly = state.execOnly,
+            onRun = { vm.runDiagnostics() },
+            onUseExecOnly = { vm.setExecOnly(true) },
+            onDismiss = { vm.dismissDiag() },
+        )
+    }
+
     // 文本编辑器
     val target = editingEntry
-    if (target != null) {
-        SftpEditorDialog(
+    if (target != null) {        SftpEditorDialog(
             entry = target,
             vm = vm,
             onDismiss = { editingEntry = null },
@@ -477,4 +505,80 @@ private suspend fun downloadToPublic(
         }
         entry.name
     }.onSuccess { onOk(it) }.onFailure { onErr(it.message ?: "下载失败") }
+}
+
+/** 连接诊断弹窗：每一步 ✓/✗ + 说明，方便截图定位服务端/客户端问题。 */
+@Composable
+private fun SftpDiagDialog(
+    steps: List<SftpDiagStep>,
+    running: Boolean,
+    execOnly: Boolean,
+    onRun: () -> Unit,
+    onUseExecOnly: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("连接诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (running && steps.isEmpty()) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp),
+                    ) {
+                        items(steps) { s ->
+                            Column(Modifier.padding(vertical = 6.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (s.ok) "✓ " else "✗ ",
+                                        color = if (s.ok) androidx.compose.ui.graphics.Color(0xFF4CAF50)
+                                        else MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(s.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                }
+                                Text(
+                                    s.detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (!running && steps.isNotEmpty() && !execOnly) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "若 SFTP 子系统失败但命令执行正常，可切换兼容模式（纯命令）使用文件管理。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+        dismissButton = {
+            Row {
+                if (!running) {
+                    TextButton(onClick = onRun) { Text("重新诊断") }
+                }
+                if (!running && steps.isNotEmpty() && !execOnly) {
+                    TextButton(onClick = onUseExecOnly) { Text("兼容模式") }
+                }
+            }
+        },
+    )
 }
