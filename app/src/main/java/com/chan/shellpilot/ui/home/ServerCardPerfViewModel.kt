@@ -12,6 +12,7 @@ import com.chan.shellpilot.ui.perf.PerfStats
 import com.chan.shellpilot.ui.perf.collectStats
 import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -99,8 +100,9 @@ class ServerCardPerfViewModel(app: Application) : AndroidViewModel(app) {
         }
         w.mgr = m
         SpLog.i("CardPerf", "${srv.name} bg connected")
+        val ctx = currentCoroutineContext()
         try {
-            while (isActive) {
+            while (ctx.isActive) {
                 try {
                     val s = collectStats(m)
                     _uiState.value = _uiState.value.copy(
