@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.StarBorder
@@ -29,14 +28,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,7 +42,6 @@ import com.chan.shellpilot.data.Server
 
 /**
  * 主页：仿 LobiShell 分区式布局。
- * - 顶部：ShellPilot 标题 + 搜索框
  * - 管理：管理连接 / 活跃隧道 / 日志和事件 / 性能监视器
  * - 连接：服务器卡片列表
  * - 工具：代码片段 / 设置
@@ -65,50 +58,10 @@ fun HomeScreen(
     onConnectServer: (Server) -> Unit,
     onAddServer: () -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
-    val filtered = if (query.isBlank()) servers
-    else servers.filter {
-        it.name.contains(query, ignoreCase = true) ||
-            it.host.contains(query, ignoreCase = true)
-    }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        item {
-            // 顶部标题 + 搜索
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "ShellPilot",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(12.dp))
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("搜索连接", fontSize = 14.sp) },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
         // 管理
         item {
             SectionTitle("管理")
@@ -143,7 +96,7 @@ fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             SectionTitle("连接")
         }
-        if (filtered.isEmpty()) {
+        if (servers.isEmpty()) {
             item {
                 Card(
                     modifier = Modifier
@@ -160,7 +113,7 @@ fun HomeScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            if (servers.isEmpty()) "还没有服务器" else "没有匹配的连接",
+                            "还没有服务器",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
@@ -173,7 +126,7 @@ fun HomeScreen(
                 }
             }
         } else {
-            items(filtered, key = { it.id }) { server ->
+            items(servers, key = { it.id }) { server ->
                 ServerCard(
                     server = server,
                     onClick = { onConnectServer(server) },
