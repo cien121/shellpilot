@@ -51,11 +51,9 @@ import com.chan.shellpilot.ui.ServerListViewModel
 import com.chan.shellpilot.ui.TerminalViewModel
 import com.chan.shellpilot.ui.events.EventLogScreen
 import com.chan.shellpilot.ui.events.EventLogViewModel
-import com.chan.shellpilot.ui.home.HomePerfSection
-import com.chan.shellpilot.ui.home.HomePerfViewModel
+import com.chan.shellpilot.ui.home.ServerCardPerfViewModel
 import com.chan.shellpilot.ui.home.HomeScreen
 import com.chan.shellpilot.ui.home.ManageConnectionsScreen
-import com.chan.shellpilot.ui.perf.PerfMonitorScreen
 import com.chan.shellpilot.ui.settings.SettingsScreen
 import com.chan.shellpilot.ui.sftp.SftpScreen
 import com.chan.shellpilot.ui.snippets.SnippetsScreen
@@ -66,7 +64,7 @@ import kotlinx.coroutines.launch
 /** 应用内页面路由（简单状态机，不引入 Navigation 库）。 */
 private enum class Route {
     Home, ManageConnections, Snippets, EventLog, Settings, Terminal,
-    Sftp, PerfMonitor, Placeholder
+    Sftp, Placeholder
 }
 
 class MainActivity : ComponentActivity() {
@@ -80,7 +78,7 @@ class MainActivity : ComponentActivity() {
                 val app = LocalContext.current.applicationContext as ShellPilotApp
                 val listViewModel: ServerListViewModel = viewModel()
                 val terminalViewModel: TerminalViewModel = viewModel()
-                val homePerfVm: HomePerfViewModel = viewModel()
+                val cardPerfVm: ServerCardPerfViewModel = viewModel()
                 val eventLogViewModel: EventLogViewModel = viewModel()
                 val scope = rememberCoroutineScope()
                 var route by remember { mutableStateOf(Route.Home) }
@@ -96,9 +94,18 @@ class MainActivity : ComponentActivity() {
                 }
                 val connectState by terminalViewModel.state.collectAsState()
                 val servers by listViewModel.servers.collectAsState()
+                val cardPerf by cardPerfVm.uiState.collectAsState()
+
+                androidx.compose.runtime.LaunchedEffect(servers) {
+                    cardPerfVm.setServers(servers)
+                }
+                val isHome = route == Route.Home
+                androidx.compose.runtime.DisposableEffect(isHome) {
+                    if (isHome) cardPerfVm.onVisible()
+                    onDispose { cardPerfVm.onHidden() }
+                }
 
                 val bridge = (connectState as? ConnectState.Connected)?.bridge
-                val activeManager = app.sshSession?.manager
 
                 // 连接成功 → 记日志 + 跳终端页
                 androidx.compose.runtime.LaunchedEffect(connectState) {
@@ -205,26 +212,21 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Route.Sftp -> {
-                        SftpScreen(onBack = { route = Route.Terminal })
-                    }
-                    Route.PerfMonitor -> {
-                        PerfMonitorScreen(
-                            manager = activeManager,
-                            serverName = currentServer?.name
-                                ?: app.sshSession?.server?.name ?: "",
-                            onBack = { route = Route.Home },
-                        )
+                        val srv = currentServer ?: app.sshSession?.server
+                        if (srv != null) {
+                            SftpScreen(
+                                server = srv,
+                                onBack = { route = Route.Terminal },
+                            )
+                        } else {
+                            // 极端情况：没有服务器信息，回终端页兜底
+                            route = Route.Terminal
+                        }
                     }
                     Route.Home -> {
                         HomeScreen(
                             servers = servers,
                             onManageConnections = { route = Route.ManageConnections },
-                            onTunnels = {
-                                placeholderTitle = "活跃隧道"
-                                route = Route.Placeholder
-                            },
-                            onEventLog = { route = Route.EventLog },
-                            onPerfMonitor = { route = Route.PerfMonitor },
                             onSnippets = { route = Route.Snippets },
                             onSettings = { route = Route.Settings },
                             onConnectServer = {
@@ -239,13 +241,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onAddServer = { showAddDialog = true },
-                            perfSection = {
-                                HomePerfSection(
-                                    vm = homePerfVm,
-                                    servers = servers,
-                                    onAddServer = { showAddDialog = true },
-                                )
-                            },
+                            cardPerf = cardPerf.stats,
                         )
                     }
                     Route.ManageConnections -> {

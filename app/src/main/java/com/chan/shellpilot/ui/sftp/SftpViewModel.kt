@@ -3,7 +3,13 @@ package com.chan.shellpilot.ui.sftp
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.chan.shellpilot.ShellPilotApp
+import com.chan.shellpilot.data.Server
+import com.chan.shellpilot.ssh.HostKeyChangedException
+import com.chan.shellpilot.ssh.KeyStore
+import com.chan.shellpilot.ssh.KnownHostsStore
+import com.chan.shellpilot.ssh.PasswordStore
+import com.chan.shellpilot.ssh.SshConnectionManager
+import com.chan.shellpilot.ssh.UnknownHostKeyException
 import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -30,45 +36,71 @@ data class SftpEntry(
     val mtimeSec: Long,
 )
 
+/** 待确认的主机密钥（首次连接 / 密钥变更）。 */
+data class SftpHostKeyInfo(
+    val host: String,
+    val port: Int,
+    val keyType: String,
+    val fingerprint: String,
+    val changed: Boolean,
+    val oldFingerprint: String?,
+)
+
 data class SftpUiState(
+    val connecting: Boolean = false, // 正在建连
     val ready: Boolean = false, // sftp 已打开
     val path: String = "",
     val entries: List<SftpEntry> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+    val hostKeyInfo: SftpHostKeyInfo? = null,
 )
 
 /**
  * SFTP 文件管理：目录浏览 / 文本文件打开编辑保存 / 上传 / 下载 / 删除。
- * 与终端共用同一条 SSH 连接（进程级会话里的 manager）。
  *
- * 稳定性设计（此前目录列表在部分服务端上失败）：
- * 1. SFTPClient 每次操作新建、用完即关，不复用缓存：SSHJ 的 SFTP PacketReader
- *    是长驻线程，某次响应解析异常会永久污染复用的 client（曾出现 wpos=-4 的
- *    arraycopy 越界，此后该 client 上所有操作一直失败）。
- * 2. 列目录 SFTP 优先，失败时用 exec(find/ls) 解析兜底：exec 通道已被验证可用，
- *    保证目录列表这个核心功能一定能显示。
- * 3. 报错带上真实异常类名，不再只显示可能为 null 的 message。
+ * 连接策略（此前"复用终端连接"在真机上反复失败）：
+ * 文件管理自己用保存的密码/私钥独立建一条 SSH 连接，进页面就连，
+ * 不依赖终端会话状态。SFTPClient 每次操作新建、用完即关。
  */
 class SftpViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val pilotApp get() = getApplication<ShellPilotApp>()
+    private val passwordStore = PasswordStore(app)
+    private val keyStore = KeyStore(app)
+    private val knownHosts = KnownHostsStore(app)
 
     private val _uiState = MutableStateFlow(SftpUiState())
     val uiState: StateFlow<SftpUiState> = _uiState.asStateFlow()
 
     private val mutex = Mutex()
-    private var started = false
+    private var mgr: SshConnectionManager? = null
+    private var server: Server? = null
+    private var startedFor: Long = -1L
 
-    /** 打开 SFTP 并定位到家目录（幂等）。 */
-    fun start() {
-        if (started) return
-        started = true
-        viewModelScope.launch { openAndList(null) }
+    /** 进页面即连（幂等；换服务器或连接断了会重连）。 */
+    fun start(server: Server) {
+        val m = mgr
+        if (startedFor == server.id && m != null && m.isConnected) return
+        startedFor = server.id
+        this.server = server
+        runCatching { mgr?.close() }
+        mgr = null
+        _uiState.value = SftpUiState()
+        viewModelScope.launch { connectAndList() }
+    }
+
+    /** 重试按钮：重连。 */
+    fun retry() {
+        viewModelScope.launch { connectAndList() }
     }
 
     fun refresh() {
-        viewModelScope.launch { openAndList(_uiState.value.path.ifBlank { null }) }
+        val m = mgr
+        if (m != null && m.isConnected) {
+            viewModelScope.launch { openAndList(_uiState.value.path.ifBlank { null }) }
+        } else {
+            viewModelScope.launch { connectAndList() }
+        }
     }
 
     fun enterDir(entry: SftpEntry) {
@@ -81,6 +113,90 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
         if (cur.isBlank() || cur == "/") return
         val parent = cur.substringBeforeLast("/").ifBlank { "/" }
         viewModelScope.launch { openAndList(parent) }
+    }
+
+    /** 指纹确认：记入 known_hosts 后重连。 */
+    fun confirmHostKey() {
+        val info = _uiState.value.hostKeyInfo ?: return
+        viewModelScope.launch {
+            knownHosts.save(info.host, info.port, info.keyType, info.fingerprint)
+            _uiState.value = _uiState.value.copy(hostKeyInfo = null)
+            connectAndList()
+        }
+    }
+
+    fun dismissHostKey() {
+        _uiState.value = _uiState.value.copy(
+            hostKeyInfo = null,
+            connecting = false,
+            error = "未确认服务器指纹",
+        )
+    }
+
+    /** 建连（处理指纹确认流程），成功后列家目录。 */
+    private suspend fun connectAndList() {
+        val srv = server ?: return
+        _uiState.value = _uiState.value.copy(
+            connecting = true, error = null, hostKeyInfo = null,
+        )
+        try {
+            val m = SshConnectionManager(getApplication<Application>().cacheDir)
+            var password = ""
+            var keyPem: String? = null
+            var keyPass: String? = null
+            if (srv.authType == "key") {
+                val k = keyStore.get(srv.id)
+                    ?: throw IllegalStateException("未找到该服务器的私钥，请重新编辑导入")
+                keyPem = k.first
+                keyPass = k.second
+            } else {
+                password = passwordStore.get(srv.id)
+                    ?: throw IllegalStateException("未记住该服务器的密码，请先连接一次并记住密码")
+            }
+            val r = m.connect(srv, password, keyPem, keyPass, knownHosts)
+            val err = r.exceptionOrNull()
+            when {
+                err is UnknownHostKeyException -> {
+                    m.close()
+                    _uiState.value = _uiState.value.copy(
+                        connecting = false,
+                        hostKeyInfo = SftpHostKeyInfo(
+                            srv.host, srv.port, err.keyType, err.fingerprint,
+                            changed = false, oldFingerprint = null,
+                        ),
+                    )
+                    return
+                }
+                err is HostKeyChangedException -> {
+                    m.close()
+                    _uiState.value = _uiState.value.copy(
+                        connecting = false,
+                        hostKeyInfo = SftpHostKeyInfo(
+                            srv.host, srv.port, err.keyType, err.newFingerprint,
+                            changed = true, oldFingerprint = err.oldFingerprint,
+                        ),
+                    )
+                    return
+                }
+                r.isFailure -> throw err ?: IllegalStateException("连接失败")
+            }
+            runCatching { mgr?.close() }
+            mgr = m
+            SpLog.i("SFTP", "independent connection established to ${srv.name}")
+            _uiState.value = _uiState.value.copy(connecting = false)
+            openAndList(null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            runCatching { mgr?.close() }
+            mgr = null
+            SpLog.e("SFTP", "connect failed: ${e::class.java.simpleName}: ${e.message}", e)
+            _uiState.value = _uiState.value.copy(
+                connecting = false,
+                error = "连接失败：${e::class.java.simpleName}" +
+                    (e.message?.let { ": ${it.take(100)}" } ?: ""),
+            )
+        }
     }
 
     private suspend fun openAndList(path: String?) {
@@ -131,10 +247,9 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
      * mutex 串行化，避免并发建通道给服务端压力。
      */
     private suspend fun <T> withFreshSftp(block: suspend (SFTPClient) -> T): T {
-        val mgr = pilotApp.sshSession?.manager
-            ?: throw IllegalStateException("SSH 未连接")
-        if (!mgr.isConnected) throw IllegalStateException("SSH 已断开")
-        val client = mgr.openSftp().getOrThrow()
+        val m = mgr ?: throw IllegalStateException("SSH 未连接")
+        if (!m.isConnected) throw IllegalStateException("SSH 已断开")
+        val client = m.openSftp().getOrThrow()
         try {
             return mutex.withLock { block(client) }
         } finally {
@@ -160,7 +275,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun resolveHomeDir(): String {
         val pwd = runCatching {
-            pilotApp.sshSession?.manager?.exec("pwd")?.getOrNull()?.trim()
+            mgr?.exec("pwd")?.getOrNull()?.trim()
         }.getOrNull()
         return if (!pwd.isNullOrEmpty() && pwd.startsWith("/")) pwd else "."
     }
@@ -171,20 +286,19 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
      * 方法2：ls -la 解析（BusyBox 等无 -printf 的环境）。
      */
     private suspend fun execLs(dir: String): List<SftpEntry> {
-        val mgr = pilotApp.sshSession?.manager
-            ?: throw IllegalStateException("SSH 未连接")
+        val m = mgr ?: throw IllegalStateException("SSH 未连接")
         val q = shQuote(dir)
-        val test = mgr.exec("[ -d $q ] && echo DIR_OK || echo DIR_MISSING")
+        val test = m.exec("[ -d $q ] && echo DIR_OK || echo DIR_MISSING")
             .getOrThrow().trim()
         if (test != "DIR_OK") throw IllegalStateException("目录不存在：$dir")
 
-        val findOut = mgr.exec(
+        val findOut = m.exec(
             "find $q -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%T@\\t%f\\0' 2>/dev/null; echo \"FIND_EXIT:\$?\""
         ).getOrThrow()
         if (findOut.substringAfterLast("FIND_EXIT:", "x").trim().startsWith("0")) {
             return parseFindPrintf(findOut.substringBeforeLast("FIND_EXIT:"), dir)
         }
-        val lsOut = mgr.exec("ls -la -b --time-style=+%s -- $q 2>/dev/null")
+        val lsOut = m.exec("ls -la -b --time-style=+%s -- $q 2>/dev/null")
             .getOrThrow()
         return parseLsLa(lsOut, dir)
     }
@@ -338,5 +452,11 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     private fun joinPath(dir: String, name: String): String {
         val d = dir.trimEnd('/')
         return if (d.isEmpty()) "/$name" else "$d/$name"
+    }
+
+    override fun onCleared() {
+        runCatching { mgr?.close() }
+        mgr = null
+        super.onCleared()
     }
 }

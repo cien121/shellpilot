@@ -65,6 +65,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chan.shellpilot.data.Server
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -78,6 +79,7 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SftpScreen(
+    server: Server,
     onBack: () -> Unit,
     vm: SftpViewModel = viewModel(),
 ) {
@@ -116,7 +118,7 @@ fun SftpScreen(
         }
     }
 
-    LaunchedEffect(Unit) { vm.start() }
+    LaunchedEffect(server.id) { vm.start(server) }
 
     Scaffold(
         topBar = {
@@ -158,8 +160,19 @@ fun SftpScreen(
                 .padding(padding),
         ) {
             when {
-                state.loading && !state.ready -> {
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                (state.loading && !state.ready) || (state.connecting && !state.ready) -> {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "正在连接 ${server.name}…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 state.error != null && !state.ready -> {
                     Column(
@@ -213,6 +226,52 @@ fun SftpScreen(
                 )
             }
         }
+    }
+
+    // 主机指纹确认（首次连接 / 密钥变更）
+    val hk = state.hostKeyInfo
+    if (hk != null) {
+        AlertDialog(
+            onDismissRequest = { vm.dismissHostKey() },
+            title = {
+                Text(
+                    if (hk.changed) "警告：主机密钥已变更！" else "确认服务器指纹",
+                    color = if (hk.changed) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Column {
+                    if (hk.changed) {
+                        Text(
+                            "该服务器的主机密钥与上次记录的不一致，可能是服务器重装，也可能是中间人攻击。请核对后再决定。",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("旧指纹：${hk.oldFingerprint ?: "--"}")
+                    } else {
+                        Text("首次连接该服务器，请核对指纹无误后信任：")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("${hk.host}:${hk.port}")
+                    Text(
+                        "${hk.keyType}\n${hk.fingerprint}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.confirmHostKey() }) {
+                    Text(if (hk.changed) "信任新密钥并连接" else "信任并连接")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissHostKey() }) { Text("取消") }
+            },
+        )
     }
 
     // 文本编辑器

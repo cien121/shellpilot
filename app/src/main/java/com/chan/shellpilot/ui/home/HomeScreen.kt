@@ -36,26 +36,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chan.shellpilot.data.Server
+import com.chan.shellpilot.ui.perf.PerfStats
 
 /**
  * 主页：仿 LobiShell 分区式布局。
  * - 管理：管理连接
- * - 连接：服务器卡片列表
- * - 性能：嵌入式性能监控（后台自动连接选定的服务器）
+ * - 连接：服务器卡片列表（每张卡片带实时 CPU/内存小字，后台自动采集）
  * - 工具：代码片段 / 设置
  */
 @Composable
 fun HomeScreen(
     servers: List<Server>,
     onManageConnections: () -> Unit,
-    onTunnels: () -> Unit,
-    onEventLog: () -> Unit,
-    onPerfMonitor: () -> Unit,
     onSnippets: () -> Unit,
     onSettings: () -> Unit,
     onConnectServer: (Server) -> Unit,
     onAddServer: () -> Unit,
-    perfSection: @Composable () -> Unit = {},
+    cardPerf: Map<Long, PerfStats> = emptyMap(),
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -114,15 +111,10 @@ fun HomeScreen(
             items(servers, key = { it.id }) { server ->
                 ServerCard(
                     server = server,
+                    perf = cardPerf[server.id],
                     onClick = { onConnectServer(server) },
                 )
             }
-        }
-
-        // 性能（嵌入式：后台自动连接选定的服务器）
-        item {
-            Spacer(Modifier.height(8.dp))
-            perfSection()
         }
 
         // 工具
@@ -207,6 +199,7 @@ private fun ManageCard(
 @Composable
 private fun ServerCard(
     server: Server,
+    perf: PerfStats?,
     onClick: () -> Unit,
 ) {
     Card(
@@ -252,6 +245,14 @@ private fun ServerCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (perf != null) {
+                    Text(
+                        "CPU ${perf.cpuText} · 内存 ${perf.memText}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             Icon(
                 Icons.Filled.StarBorder,
