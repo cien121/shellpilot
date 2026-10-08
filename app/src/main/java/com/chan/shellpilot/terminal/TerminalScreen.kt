@@ -55,6 +55,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextLayoutResult
@@ -94,6 +95,7 @@ fun TerminalScreen(
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val clipboardManager = LocalClipboardManager.current
 
     var stickToBottom by remember { mutableStateOf(true) }
     var ctrlSticky by remember { mutableStateOf(false) }
@@ -263,6 +265,10 @@ fun TerminalScreen(
             SpecialKeyRow(
                 ctrlSticky = ctrlSticky,
                 altSticky = altSticky,
+                onPaste = {
+                    val clip = clipboardManager.getText()?.text
+                    if (!clip.isNullOrEmpty()) handlePaste(clip)
+                },
                 onToggleCtrl = {
                     ctrlSticky = !ctrlSticky
                     if (ctrlSticky) altSticky = false
@@ -291,7 +297,7 @@ private fun TerminalLineItem(
     Box(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = line.text,
-            color = Color(0xFFE8E8E8),
+            color = Color(0xFF33FF66),
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
             lineHeight = 18.sp,
@@ -424,6 +430,7 @@ private fun SpecialKeyRow(
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
     onBytes: (ByteArray) -> Unit,
+    onPaste: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -437,6 +444,7 @@ private fun SpecialKeyRow(
         TKey("TAB") { onBytes(byteArrayOf(0x09.toByte())) }
         TToggle("CTRL", ctrlSticky, onToggleCtrl)
         TToggle("ALT", altSticky, onToggleAlt)
+        TKey("粘贴") { onPaste() }
         TKey("↑") { onBytes(escSeq("[A")) }
         TKey("↓") { onBytes(escSeq("[B")) }
         TKey("←") { onBytes(escSeq("[D")) }

@@ -23,7 +23,7 @@ import java.nio.charset.CodingErrorAction
  * 全屏应用（vim/htop）只能近似渲染，后续可换 cell-grid 实现。
  */
 
-private val DEFAULT_FG = Color(0xFFE8E8E8)
+private val DEFAULT_FG = Color(0xFF33FF66)
 private val NO_BG = Color.Transparent
 
 private data class CellStyle(val fg: Color, val bg: Color, val bold: Boolean)
@@ -82,11 +82,13 @@ private fun rgbColor(r: Int, g: Int, b: Int): Color {
 
 private enum class PState { GROUND, ESC, ESC_SKIP_ONE, CSI, OSC, OSC_ESC, ST_SWALLOW, ST_ESC }
 
-class AnsiTerminal(private val maxLines: Int = 2000) {
+class AnsiTerminal(private val maxLines: Int = 2000, private val cols: Int = 80) {
 
     private val lines = ArrayList<StyledLine>()
     private var row = 0
     private var col = 0
+    /** 自动换行：写满一行后下一次 putChar 先换行（与 pty 宽度 80 对齐）。 */
+    private var wrapPending = false
 
     private var fg: Color = DEFAULT_FG
     private var bg: Color = NO_BG
@@ -249,11 +251,20 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     private fun newLine() {
         row++
         col = 0
+        wrapPending = false
         ensureRow(row)
         trim()
     }
 
     private fun putChar(c: Char) {
+        // 自动换行（修粘贴长命令与 curl 进度条重叠）：
+        // pty 宽度 80，远端按 80 列排版；解析器之前无换行逻辑，
+        // 超长行全挤在一个逻辑行里，curl 的 \r 回车覆盖只重写前 80 列，
+        // 行尾残留造成显示重叠。这里写满后换行，与远端对齐。
+        if (wrapPending) {
+            wrapPending = false
+            newLine()
+        }
         ensureRow(row)
         val line = lines[row]
         if (col < line.text.length) {
@@ -268,14 +279,24 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
             line.styles.add(curStyle())
         }
         col++
+        if (col >= cols) {
+            // 到达行尾：下一次写字符时换行（标准终端 wrap 行为）。
+            // 注意 \r 会清掉 wrapPending（回车后从行首覆盖，不换行）。
+            wrapPending = true
+            col = cols - 1
+        }
     }
+
+    private var sWrapPending = false
 
     private fun saveCursor() {
         sRow = row; sCol = col; sFg = fg; sBg = bg; sBold = bold
+        sWrapPending = wrapPending
     }
 
     private fun restoreCursor() {
         row = sRow; col = sCol; fg = sFg; bg = sBg; bold = sBold
+        wrapPending = sWrapPending
         ensureRow(row)
     }
 
@@ -286,6 +307,7 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     private fun resetScreen() {
         lines.clear()
         row = 0; col = 0
+        wrapPending = false
         resetStyle()
     }
 
@@ -393,6 +415,8 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     // ---------- CSI 分发 ----------
 
     private fun dispatchCsi(final: Char) {
+        // 显式光标移动取消待换行（标准终端行为）
+        wrapPending = false
         if (csiPrivate) {
             // 跟踪 bracketed paste 开关，其他 ? 私有序列一律吞掉
             if (final == 'h' || final == 'l') {
@@ -456,10 +480,20 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
             PState.GROUND -> when (c) {
                 '\u001B' -> state = PState.ESC
                 '\u0007' -> {}
-                '\b' -> if (col > 0) col--
-                '\t' -> col = ((col + 8) / 8) * 8
+                '\b' -> {
+                    wrapPending = false
+                    if (col > 0) col--
+                }
+                '\t' -> {
+                    wrapPending = false
+                    col = ((col + 8) / 8) * 8
+                }
                 '\n', '\u000B', '\u000C' -> newLine()
-                '\r' -> col = 0
+                '\r' -> {
+                    // 回车：清除待换行标记（回车后从行首覆盖，不换行）
+                    col = 0
+                    wrapPending = false
+                }
                 '\u0000' -> {}
                 else -> if (c >= ' ' && c != '') putChar(c)
             }
