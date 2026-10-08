@@ -134,6 +134,25 @@ fun TerminalScreen(
         }
     }
 
+    /**
+     * 粘贴（修粘贴乱码）：
+     * 多字符增量不再逐字符拆成 N 次 sendText（之前每个字符起独立协程并发写，
+     * 写入交错导致字符顺序错乱）。整段经 sendPaste 单次原子写入；
+     * 远端若启用了 bracketed paste（bash 默认开），用 ESC[200~...ESC[201~
+     * 包裹，shell 把整段当作粘贴插入、不逐行执行，特殊字符也不会截断。
+     */
+    fun handlePaste(text: String) {
+        if (text.isEmpty()) return
+        // 清掉文本里自带的粘贴标记，避免提前闭合包裹
+        val clean = text
+            .replace("\u001B[201~", "")
+            .replace("\u001B[200~", "")
+        val bracketed = bridge?.isBracketedPasteEnabled() == true
+        val payload = if (bracketed) "\u001B[200~$clean\u001B[201~" else clean
+        SpLog.d("TerminalInput", "paste ${clean.length} chars, bracketed=$bracketed")
+        bridge?.sendPaste(payload)
+    }
+
     // 跟踪用户是否在底部：在底部才自动跟随新输出
     LaunchedEffect(listState) {
         snapshotFlow {
@@ -228,6 +247,7 @@ fun TerminalScreen(
                 HiddenInputField(
                     focusRequester = focusRequester,
                     onChar = ::handleChar,
+                    onPaste = ::handlePaste,
                     onDelete = { sendBytes(byteArrayOf(DEL)) },
                     onDone = { sendText("\r") },
                 )
@@ -341,11 +361,16 @@ private fun CursorBlock(
  *    的退格以 KeyEvent 形式下发，不经过 onValueChange。
  * 两条路径互斥（KeyEvent 被消费后文本不变，不会再触发 onValueChange），
  * 不会重复发送 DEL。
+ *
+ * 粘贴（修粘贴乱码）：多字符增量走 onPaste 整段原子发送，不再逐字符
+ * 拆成 N 次 sendText（之前每个字符起独立协程并发写导致交错乱码）。
+ * diff 用公共前缀算法，兼容输入法各种提交方式。
  */
 @Composable
 private fun HiddenInputField(
     focusRequester: FocusRequester,
     onChar: (Char) -> Unit,
+    onPaste: (String) -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -354,12 +379,16 @@ private fun HiddenInputField(
         value = hidden,
         onValueChange = { new ->
             val old = hidden
-            if (new.length > old.length) {
-                for (c in new.substring(old.length)) onChar(c)
-            } else if (new.length < old.length) {
-                val n = old.length - new.length
-                SpLog.d("TerminalInput", "delete x$n via onValueChange")
-                repeat(n) { onDelete() }
+            val common = old.commonPrefixWith(new).length
+            val removed = old.length - common
+            val added = new.substring(common)
+            if (removed > 0) {
+                SpLog.d("TerminalInput", "delete x$removed via onValueChange")
+                repeat(removed) { onDelete() }
+            }
+            if (added.isNotEmpty()) {
+                if (added.length == 1) onChar(added[0])
+                else onPaste(added)
             }
             if (new != " ") hidden = " "
         },

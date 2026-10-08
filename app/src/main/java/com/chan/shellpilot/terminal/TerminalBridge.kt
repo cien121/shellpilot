@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.Closeable
 
@@ -48,6 +50,12 @@ class TerminalBridge(
 
     private var pumpJob: Job? = null
     private var trailingEmitJob: Job? = null
+
+    /**
+     * 发送写锁：所有写 shell stdin 的操作（打字/粘贴/特殊键）都经此串行化。
+     * 之前每次 sendText 起独立协程并发写，多字节写入交错导致粘贴乱码。
+     */
+    private val sendMutex = Mutex()
 
     /** 当前终端画面快照（主线程调用）。 */
     fun snapshot(): AnnotatedString = synchronized(lock) { term.snapshot() }
@@ -133,21 +141,23 @@ class TerminalBridge(
         }
     }
 
-    /** 原样发送文本（UTF-8）。 */
+    /** 原样发送文本（UTF-8）。写操作经 sendMutex 串行化，不与粘贴/特殊键交错。 */
     fun sendText(text: String) {
         if (text.isEmpty()) return
         SpLog.d("TerminalBridge", "sendText: ${text.length} chars")
         scope.launch(Dispatchers.IO) {
-            runCatching {
-                shell.input.write(text.toByteArray(Charsets.UTF_8))
-                shell.input.flush()
-            }.onFailure {
-                SpLog.e("TerminalBridge", "sendText failed: ${it.message}")
+            sendMutex.withLock {
+                runCatching {
+                    shell.input.write(text.toByteArray(Charsets.UTF_8))
+                    shell.input.flush()
+                }.onFailure {
+                    SpLog.e("TerminalBridge", "sendText failed: ${it.message}")
+                }
             }
         }
     }
 
-    /** 原样发送字节（特殊键/控制字符）。 */
+    /** 原样发送字节（特殊键/控制字符）。写操作经 sendMutex 串行化。 */
     fun sendBytes(bytes: ByteArray) {
         if (bytes.isEmpty()) return
         SpLog.d(
@@ -155,14 +165,39 @@ class TerminalBridge(
             "sendBytes: ${bytes.joinToString(" ") { "0x%02X".format(it) }}",
         )
         scope.launch(Dispatchers.IO) {
-            runCatching {
-                shell.input.write(bytes)
-                shell.input.flush()
-            }.onFailure {
-                SpLog.e("TerminalBridge", "sendBytes failed: ${it.message}")
+            sendMutex.withLock {
+                runCatching {
+                    shell.input.write(bytes)
+                    shell.input.flush()
+                }.onFailure {
+                    SpLog.e("TerminalBridge", "sendBytes failed: ${it.message}")
+                }
             }
         }
     }
+
+    /**
+     * 原子发送粘贴文本（修粘贴乱码）。
+     * 整段文本单次 write + sendMutex 串行化，保证字符顺序不被其他
+     * 并发写入打乱。调用方负责 bracketed paste 包裹（见 TerminalScreen.handlePaste）。
+     */
+    fun sendPaste(text: String) {
+        if (text.isEmpty()) return
+        SpLog.d("TerminalBridge", "sendPaste: ${text.length} chars")
+        scope.launch(Dispatchers.IO) {
+            sendMutex.withLock {
+                runCatching {
+                    shell.input.write(text.toByteArray(Charsets.UTF_8))
+                    shell.input.flush()
+                }.onFailure {
+                    SpLog.e("TerminalBridge", "sendPaste failed: ${it.message}")
+                }
+            }
+        }
+    }
+
+    /** 远端是否启用了 bracketed paste（决定粘贴时是否加 ESC[200~/201~ 包裹）。 */
+    fun isBracketedPasteEnabled(): Boolean = term.bracketedPasteEnabled
 
     /** 发送一整行命令（供脚本片段调用）。 */
     fun sendLine(line: String) = sendText("$line\r")

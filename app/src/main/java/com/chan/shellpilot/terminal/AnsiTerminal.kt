@@ -102,6 +102,16 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     private val csiParams = StringBuilder()
     private var csiPrivate = false
 
+    /**
+     * 远端是否启用了 bracketed paste（ESC[?2004h 开 / ESC[?2004l 关）。
+     * 粘贴时若启用，用 ESC[200~...ESC[201~ 包裹文本：
+     * shell 把整段当作粘贴插入、不逐行执行，也不会被特殊字符截断。
+     * @Volatile：IO 线程（解析）写、主线程（发送粘贴）读。
+     */
+    @Volatile
+    var bracketedPasteEnabled: Boolean = false
+        private set
+
     /** 行 ID 计数器：每创建一个 StyledLine 分配一个，保证 LazyColumn key 稳定。 */
     private var nextLineId = 0L
     private fun newStyledLine() = StyledLine(nextLineId++)
@@ -383,7 +393,14 @@ class AnsiTerminal(private val maxLines: Int = 2000) {
     // ---------- CSI 分发 ----------
 
     private fun dispatchCsi(final: Char) {
-        if (csiPrivate) return // ? 开头的私有序列一律吞掉（含 bracketed paste）
+        if (csiPrivate) {
+            // 跟踪 bracketed paste 开关，其他 ? 私有序列一律吞掉
+            if (final == 'h' || final == 'l') {
+                val nums = csiParams.toString().split(';').mapNotNull { it.toIntOrNull() }
+                if (2004 in nums) bracketedPasteEnabled = (final == 'h')
+            }
+            return
+        }
         val p = csiParams.toString().split(';').map { it.toIntOrNull() ?: 0 }.toIntArray()
         fun n(i: Int) = (if (i < p.size && p[i] != 0) p[i] else 1).coerceAtLeast(1)
         fun v0() = p.getOrElse(0) { 0 }
