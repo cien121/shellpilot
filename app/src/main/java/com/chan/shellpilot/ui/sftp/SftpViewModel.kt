@@ -7,7 +7,6 @@ import com.chan.shellpilot.ShellPilotApp
 import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
