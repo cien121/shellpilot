@@ -1,42 +1,74 @@
 package com.chan.shellpilot.terminal
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import com.chan.shellpilot.ssh.ShellSession
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.Closeable
 
 /**
- * STUB: termlib is disabled until a version compatible with compileSdk 34 exists
- * (0.2.1/0.3.11 require compileSdk 37). This stub keeps the skeleton compiling;
- * real terminal emulation wiring lands in a later milestone.
+ * MVP terminal bridge (no termlib): pumps the SSH shell's output stream into
+ * a text buffer and forwards typed lines to the shell's input.
  *
- * TODO: re-enable termlib and restore full TerminalBridge implementation.
+ * Full terminal emulation (termlib + libvterm) is a later milestone; this is
+ * enough for running commands and reading output on a phone.
  */
 class TerminalBridge(
     private val shell: ShellSession,
     private val scope: CoroutineScope,
 ) : Closeable {
-    fun start() { /* stub */ }
-    override fun close() { runCatching { shell.close() } }
-}
 
-/** Compose screen hosting the terminal. Placeholder until termlib is re-enabled. */
-@Composable
-fun TerminalScreen(
-    bridge: TerminalBridge?,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier.fillMaxSize().background(Color.Black),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("终端占位（termlib 待接入）", color = Color.Gray)
+    private val _output = MutableStateFlow(StringBuilder())
+    /** Full terminal transcript. */
+    val output: StateFlow<StringBuilder> = _output.asStateFlow()
+
+    private val _connected = MutableStateFlow(true)
+    val connected: StateFlow<Boolean> = _connected.asStateFlow()
+
+    private var pumpJob: Job? = null
+
+    fun start() {
+        pumpJob = scope.launch(Dispatchers.IO) {
+            val buf = ByteArray(4096)
+            try {
+                while (isActive) {
+                    val n = shell.output.read(buf)
+                    if (n < 0) break
+                    if (n == 0) continue
+                    val text = String(buf, 0, n, Charsets.UTF_8)
+                    withContext(Dispatchers.Main) {
+                        _output.value.append(text)
+                        // Cap buffer at ~200KB to avoid runaway memory.
+                        if (_output.value.length > 200_000) {
+                            _output.value.delete(0, _output.value.length - 200_000)
+                        }
+                        // Trigger recompose by replacing the reference.
+                        _output.value = StringBuilder(_output.value)
+                    }
+                }
+            } catch (_: Exception) {
+                // Stream closed — session ended.
+            } finally {
+                withContext(Dispatchers.Main) { _connected.value = false }
+            }
+        }
+    }
+
+    /** Send a typed line to the remote shell. */
+    fun sendLine(line: String) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { shell.sendCommand(line) }
+        }
+    }
+
+    override fun close() {
+        pumpJob?.cancel()
+        runCatching { shell.close() }
     }
 }
