@@ -33,4 +33,4 @@ jobs:
         with:
           name: ShellPilot-APK
           path: app/build/outputs/apk/**/*.apk
-          retention-days: 14
+          retention-days: 7
