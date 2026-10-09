@@ -13,8 +13,8 @@ android {
         applicationId = "com.chan.shellpilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.5.6"
+        versionCode = 20
+        versionName = "0.5.7"
 
         vectorDrawables {
             useSupportLibrary = true

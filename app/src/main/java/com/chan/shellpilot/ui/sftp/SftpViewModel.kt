@@ -70,9 +70,11 @@ data class SftpUiState(
 /**
  * SFTP 文件管理：目录浏览 / 文本文件打开编辑保存 / 上传 / 下载 / 删除。
  *
- * 连接策略（此前"复用终端连接"在真机上反复失败）：
+ * 连接策略：
  * 文件管理自己用保存的密码/私钥独立建一条 SSH 连接，进页面就连，
- * 不依赖终端会话状态。SFTPClient 每次操作新建、用完即关。
+ * 不依赖终端会话状态。SFTPClient 在页面内复用（打开一次，进目录/返回
+ * 不重连），退出页面时关闭；若某次操作异常疑似 client 被污染则丢弃，
+ * 下次操作懒重建。
  */
 class SftpViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -85,6 +87,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
 
     private val mutex = Mutex()
     private var mgr: SshConnectionManager? = null
+    private var sftp: SFTPClient? = null // 页面级复用：进页面打开，退出关闭
     private var server: Server? = null
     private var startedFor: Long = -1L
 
@@ -94,8 +97,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
         if (startedFor == server.id && m != null && m.isConnected) return
         startedFor = server.id
         this.server = server
-        runCatching { mgr?.close() }
-        mgr = null
+        closeAll()
         _uiState.value = SftpUiState()
         viewModelScope.launch { connectAndList() }
     }
@@ -336,12 +338,12 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
             mgr = m
             SpLog.i("SFTP", "independent connection established to ${srv.name}")
             _uiState.value = _uiState.value.copy(connecting = false)
+            openPageSftp()
             openAndList(null)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            runCatching { mgr?.close() }
-            mgr = null
+            closeAll()
             SpLog.e("SFTP", "connect failed: ${e::class.java.simpleName}: ${e.message}", e)
             _uiState.value = _uiState.value.copy(
                 connecting = false,
@@ -349,6 +351,23 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                     (e.message?.let { ": ${it.take(100)}" } ?: ""),
             )
         }
+    }
+
+    /** 打开页面级复用的 SFTPClient（IO 线程；失败抛给上层走 exec 兜底）。 */
+    private suspend fun openPageSftp() {
+        val m = mgr ?: throw IllegalStateException("SSH 未连接")
+        val client = withContext(Dispatchers.IO) { m.openSftp().getOrThrow() }
+        runCatching { sftp?.close() }
+        sftp = client
+        SpLog.i("SFTP", "page sftp client opened")
+    }
+
+    /** 关闭页面连接与 SFTPClient。 */
+    private fun closeAll() {
+        runCatching { sftp?.close() }
+        sftp = null
+        runCatching { mgr?.close() }
+        mgr = null
     }
 
     private suspend fun openAndList(path: String?) {
@@ -383,7 +402,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun listDir(target: String): List<SftpEntry> {
         if (_uiState.value.execOnly) return execLs(target)
         try {
-            return withFreshSftp { c -> sftpLs(c, target) }
+            return withSftp { c -> sftpLs(c, target) }
         } catch (e: CancellationException) {
             throw e // 协程取消直接抛，不走 exec 兜底
         } catch (e: Exception) {
@@ -396,20 +415,32 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 每次新建 SFTPClient、用完即关。
-     * mutex 串行化，避免并发建通道给服务端压力。
+     * 页面级复用的 SFTPClient：进页面打开一次，进目录/返回/读写都不重连。
+     * mutex 串行化，避免并发给服务端压力。
      * 注意：整个块必须跑在 IO 线程——SSHJ 的 ls/read/write 都是阻塞网络调用，
      * 在主线程会直接抛 NetworkOnMainThreadException。
+     * 若某次操作抛异常（疑似 client 被污染），丢弃 client，下次懒重建。
      */
-    private suspend fun <T> withFreshSftp(block: suspend (SFTPClient) -> T): T {
+    private suspend fun <T> withSftp(block: suspend (SFTPClient) -> T): T {
         val m = mgr ?: throw IllegalStateException("SSH 未连接")
         if (!m.isConnected) throw IllegalStateException("SSH 已断开")
         return withContext(Dispatchers.IO) {
-            val client = m.openSftp().getOrThrow()
-            try {
-                mutex.withLock { block(client) }
-            } finally {
-                runCatching { client.close() }
+            mutex.withLock {
+                var client = sftp
+                if (client == null) {
+                    client = m.openSftp().getOrThrow()
+                    sftp = client
+                    SpLog.i("SFTP", "sftp client lazily reopened")
+                }
+                try {
+                    block(client)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    runCatching { client.close() }
+                    if (sftp === client) sftp = null
+                    throw e
+                }
             }
         }
     }
@@ -537,7 +568,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
             if (_uiState.value.execOnly) {
                 execReadBytes(path).toString(Charsets.UTF_8)
             } else {
-                withFreshSftp { c ->
+                withSftp { c ->
                     val attrs = c.stat(path)
                     if (attrs.size > 2 * 1024 * 1024) {
                         throw IllegalArgumentException("文件过大（>2MB），请下载查看")
@@ -558,7 +589,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                 if (_uiState.value.execOnly) {
                     execWriteBytes(path, content.toByteArray(Charsets.UTF_8))
                 } else {
-                    withFreshSftp { c ->
+                    withSftp { c ->
                         val rf = c.open(path, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
                         rf.RemoteFileOutputStream().use { outs ->
                             content.byteInputStream(Charsets.UTF_8).use { ins ->
@@ -579,7 +610,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                 if (_uiState.value.execOnly) {
                     execWriteBytes(joinPath(_uiState.value.path, fileName), bytes)
                 } else {
-                    withFreshSftp { c ->
+                    withSftp { c ->
                         val remote = joinPath(_uiState.value.path, fileName)
                         val rf = c.open(remote, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC))
                         rf.RemoteFileOutputStream().use { outs ->
@@ -599,7 +630,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                     val bytes = execReadBytes(entry.path, maxBytes = 64 * 1024 * 1024)
                     out.use { o -> o.write(bytes) }
                 } else {
-                    withFreshSftp { c ->
+                    withSftp { c ->
                         val rf = c.open(entry.path)
                         rf.RemoteFileInputStream().use { ins ->
                             out.use { o -> ins.copyTo(o) }
@@ -619,7 +650,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                 val cmd = if (entry.isDir) "rmdir $q" else "rm -f $q"
                 m.exec(cmd).getOrThrow()
             } else {
-                withFreshSftp { c ->
+                withSftp { c ->
                     if (entry.isDir) c.rmdir(entry.path) else c.rm(entry.path)
                 }
             }
@@ -678,8 +709,7 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        runCatching { mgr?.close() }
-        mgr = null
+        closeAll()
         super.onCleared()
     }
 }
