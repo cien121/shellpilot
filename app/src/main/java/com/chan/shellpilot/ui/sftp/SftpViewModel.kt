@@ -249,15 +249,17 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
                         step("SFTP子系统", false, failOf(e) + " —— 服务端可能没开 Subsystem sftp")
                     }
 
-                    // 5. SFTP 列目录
+                    // 5. SFTP 列目录（ls 是阻塞网络调用，必须切 IO 线程）
                     try {
-                        val c = m.openSftp().getOrThrow()
-                        try {
-                            val n = c.ls(".").size
-                            step("SFTP列目录", true, "家目录 $n 项")
-                        } finally {
-                            runCatching { c.close() }
+                        val n = withContext(Dispatchers.IO) {
+                            val c = m.openSftp().getOrThrow()
+                            try {
+                                c.ls(".").size
+                            } finally {
+                                runCatching { c.close() }
+                            }
                         }
+                        step("SFTP列目录", true, "家目录 $n 项")
                     } catch (e: Exception) {
                         step("SFTP列目录", false, failOf(e))
                     }
@@ -396,15 +398,19 @@ class SftpViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 每次新建 SFTPClient、用完即关。
      * mutex 串行化，避免并发建通道给服务端压力。
+     * 注意：整个块必须跑在 IO 线程——SSHJ 的 ls/read/write 都是阻塞网络调用，
+     * 在主线程会直接抛 NetworkOnMainThreadException。
      */
     private suspend fun <T> withFreshSftp(block: suspend (SFTPClient) -> T): T {
         val m = mgr ?: throw IllegalStateException("SSH 未连接")
         if (!m.isConnected) throw IllegalStateException("SSH 已断开")
-        val client = m.openSftp().getOrThrow()
-        try {
-            return mutex.withLock { block(client) }
-        } finally {
-            runCatching { client.close() }
+        return withContext(Dispatchers.IO) {
+            val client = m.openSftp().getOrThrow()
+            try {
+                mutex.withLock { block(client) }
+            } finally {
+                runCatching { client.close() }
+            }
         }
     }
 
