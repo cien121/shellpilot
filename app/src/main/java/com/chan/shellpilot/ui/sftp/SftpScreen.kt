@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -303,12 +305,13 @@ fun SftpScreen(
         )
     }
 
-    // 文本编辑器
+    // 文本编辑器（全屏）
     val target = editingEntry
-    if (target != null) {        SftpEditorDialog(
+    if (target != null) {
+        SftpEditorScreen(
             entry = target,
             vm = vm,
-            onDismiss = { editingEntry = null },
+            onBack = { editingEntry = null },
             onSaved = {
                 editingEntry = null
                 toast("已保存")
@@ -399,12 +402,13 @@ private fun SftpRow(
     }
 }
 
-/** 文本文件编辑器：打开即读，保存即写回服务器。 */
+/** 文本文件编辑器（全屏）：顶部标题栏（文件名+关闭/保存），下方全屏文本编辑区。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SftpEditorDialog(
+private fun SftpEditorScreen(
     entry: SftpEntry,
     vm: SftpViewModel,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
     onSaved: () -> Unit,
     onError: (String) -> Unit,
 ) {
@@ -412,53 +416,78 @@ private fun SftpEditorDialog(
     var text by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
+    BackHandler { onBack() }
+
     LaunchedEffect(entry.path) {
         vm.readText(entry.path)
             .onSuccess { text = it }
-            .onFailure { onError(it.message ?: "读取失败"); onDismiss() }
+            .onFailure { onError(it.message ?: "读取失败"); onBack() }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(entry.name, fontSize = 15.sp, fontFamily = FontFamily.Monospace) },
-        text = {
-            val t = text
-            if (t == null) {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                OutlinedTextField(
-                    value = t,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    textStyle = TextStyle(
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        entry.name,
+                        fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                    ),
-                    minLines = 12,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = text != null && !saving,
-                onClick = {
-                    val t = text ?: return@TextButton
-                    saving = true
-                    scope.launch {
-                        vm.writeText(entry.path, t)
-                            .onSuccess { onSaved() }
-                            .onFailure { onError(it.message ?: "保存失败") }
-                        saving = false
+                        maxLines = 1,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "关闭")
                     }
                 },
-            ) { Text(if (saving) "保存中…" else "保存") }
+                actions = {
+                    TextButton(
+                        enabled = text != null && !saving,
+                        onClick = {
+                            val t = text ?: return@TextButton
+                            saving = true
+                            scope.launch {
+                                vm.writeText(entry.path, t)
+                                    .onSuccess { onSaved() }
+                                    .onFailure { onError(it.message ?: "保存失败") }
+                                saving = false
+                            }
+                        },
+                    ) { Text(if (saving) "保存中…" else "保存") }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
+            )
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
-    )
+    ) { padding ->
+        val t = text
+        if (t == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            OutlinedTextField(
+                value = t,
+                onValueChange = { text = it },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .imePadding()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                textStyle = TextStyle(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                ),
+            )
+        }
+    }
 }
 
 private fun formatSize(bytes: Long): String = when {
