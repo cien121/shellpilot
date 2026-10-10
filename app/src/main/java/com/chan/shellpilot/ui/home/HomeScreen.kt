@@ -1,9 +1,7 @@
 package com.chan.shellpilot.ui.home
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,9 +17,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,29 +34,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chan.shellpilot.data.Server
-import com.chan.shellpilot.ui.perf.PerfStats
 
 /**
  * 主页：仿 LobiShell 分区式布局。
- * - 管理：管理连接
- * - 连接：服务器卡片列表（每张卡片带 CPU/内存/硬盘/网络 4 指标小方块，后台自动采集）
+ * - 管理：管理连接 / 活跃隧道 / 日志和事件 / 性能监视器
+ * - 连接：服务器卡片列表
  * - 工具：代码片段 / 设置
  */
 @Composable
 fun HomeScreen(
     servers: List<Server>,
     onManageConnections: () -> Unit,
+    onTunnels: () -> Unit,
+    onEventLog: () -> Unit,
+    onPerfMonitor: () -> Unit,
     onSnippets: () -> Unit,
     onSettings: () -> Unit,
     onConnectServer: (Server) -> Unit,
     onAddServer: () -> Unit,
-    cardPerf: Map<Long, PerfStats> = emptyMap(),
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -73,6 +74,24 @@ fun HomeScreen(
                 title = "管理连接",
                 subtitle = "SSH 连接、端口转发和身份",
                 onClick = onManageConnections,
+            )
+            ManageCard(
+                icon = Icons.Filled.Cable,
+                title = "活跃隧道",
+                subtitle = "无活跃隧道",
+                onClick = onTunnels,
+            )
+            ManageCard(
+                icon = Icons.Filled.ReceiptLong,
+                title = "日志和事件",
+                subtitle = "连接和同步事件",
+                onClick = onEventLog,
+            )
+            ManageCard(
+                icon = Icons.Filled.ShowChart,
+                title = "性能监视器",
+                subtitle = "CPU、RAM、磁盘和网络图表",
+                onClick = onPerfMonitor,
             )
         }
 
@@ -114,7 +133,6 @@ fun HomeScreen(
             items(servers, key = { it.id }) { server ->
                 ServerCard(
                     server = server,
-                    perf = cardPerf[server.id],
                     onClick = { onConnectServer(server) },
                 )
             }
@@ -142,7 +160,7 @@ fun HomeScreen(
 }
 
 @Composable
-internal fun SectionTitle(text: String) {
+private fun SectionTitle(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
@@ -202,7 +220,6 @@ private fun ManageCard(
 @Composable
 private fun ServerCard(
     server: Server,
-    perf: PerfStats?,
     onClick: () -> Unit,
 ) {
     Card(
@@ -228,7 +245,7 @@ private fun ServerCard(
                     .clip(CircleShape),
                 color = MaterialTheme.colorScheme.primary,
             ) {
-                Box(
+                androidx.compose.foundation.layout.Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.fillMaxSize(),
                 ) {
@@ -243,11 +260,6 @@ private fun ServerCard(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(server.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                Text(
-                    "${server.username}@${server.host}:${server.port}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
             Icon(
                 Icons.Filled.StarBorder,
@@ -255,96 +267,6 @@ private fun ServerCard(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(22.dp),
             )
-        }
-        // 4 指标：CPU / 内存 / 硬盘 / 网络，直接展示数值
-        if (perf != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                MetricChip(
-                    label = "CPU",
-                    value = perf.cpuText,
-                    fraction = perf.cpuFraction,
-                    color = Color(0xFF00B0FF),
-                    modifier = Modifier.weight(1f),
-                )
-                MetricChip(
-                    label = "内存",
-                    value = perf.memText,
-                    fraction = perf.memFraction,
-                    color = Color(0xFFD500F9),
-                    modifier = Modifier.weight(1f),
-                )
-                MetricChip(
-                    label = "硬盘",
-                    value = perf.diskText,
-                    fraction = perf.diskFraction,
-                    color = Color(0xFFFF9100),
-                    modifier = Modifier.weight(1f),
-                )
-                MetricChip(
-                    label = "网络",
-                    value = perf.netText,
-                    fraction = -1f,
-                    color = Color(0xFF00E676),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
-}
-
-/** 指标小方块：标签 + 数值 + 细进度条，直观易读。fraction<0 时不画进度条（如网络）。 */
-@Composable
-private fun MetricChip(
-    label: String,
-    value: String,
-    fraction: Float,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = label,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = value,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = color,
-                maxLines = 1,
-            )
-            if (fraction >= 0f) {
-                Spacer(Modifier.height(6.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(color.copy(alpha = 0.2f)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(color),
-                    )
-                }
-            }
         }
     }
 }
