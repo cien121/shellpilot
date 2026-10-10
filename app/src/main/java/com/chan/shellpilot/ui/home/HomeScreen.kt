@@ -312,34 +312,34 @@ private fun MetricChip(
         color = color.copy(alpha = 0.12f),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = label,
-                fontSize = 9.sp,
+                fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = value,
-                fontSize = 11.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = color,
                 maxLines = 1,
             )
             if (fraction >= 0f) {
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.dp)
+                        .height(4.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(color.copy(alpha = 0.2f)),
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                            .height(3.dp)
+                            .height(4.dp)
                             .clip(RoundedCornerShape(2.dp))
                             .background(color),
                     )
