@@ -268,28 +268,28 @@ private fun ServerCard(
                     label = "CPU",
                     value = perf.cpuText,
                     fraction = perf.cpuFraction,
-                    color = Color(0xFF4FC3F7),
+                    color = Color(0xFF00B0FF),
                     modifier = Modifier.weight(1f),
                 )
                 MetricChip(
                     label = "内存",
                     value = perf.memText,
                     fraction = perf.memFraction,
-                    color = Color(0xFFBA68C8),
+                    color = Color(0xFFD500F9),
                     modifier = Modifier.weight(1f),
                 )
                 MetricChip(
                     label = "硬盘",
                     value = perf.diskText,
                     fraction = perf.diskFraction,
-                    color = Color(0xFFFFB74D),
+                    color = Color(0xFFFF9100),
                     modifier = Modifier.weight(1f),
                 )
                 MetricChip(
                     label = "网络",
                     value = perf.netText,
                     fraction = -1f,
-                    color = Color(0xFF81C784),
+                    color = Color(0xFF00E676),
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -309,7 +309,7 @@ private fun MetricChip(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(10.dp),
-        color = color.copy(alpha = 0.12f),
+        color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
