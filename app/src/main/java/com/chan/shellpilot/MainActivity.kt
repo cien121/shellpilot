@@ -200,6 +200,7 @@ class MainActivity : ComponentActivity() {
                                     route = Route.Home
                                 },
                                 onOpenSftp = { route = Route.Sftp },
+                                onOpenSnippets = { route = Route.Snippets },
                             )
                         } else {
                             // 连接没了但还停在终端页（极端情况）→ 回主页
