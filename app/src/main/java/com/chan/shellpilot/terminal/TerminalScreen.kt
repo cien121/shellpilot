@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chan.shellpilot.data.Server
 import com.chan.shellpilot.ui.sftp.SftpPanel
+import com.chan.shellpilot.ui.sftp.SftpViewModel
 import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.delay
 
@@ -93,6 +94,7 @@ fun TerminalScreen(
     title: String,
     bridge: TerminalBridge?,
     server: Server?,
+    sftpVm: SftpViewModel,
     onBack: () -> Unit,
     onOpenSnippets: () -> Unit = {},
     onDisconnect: () -> Unit = {},
@@ -234,6 +236,7 @@ fun TerminalScreen(
             if (showSftpPanel && server != null) {
                 SftpPanel(
                     server = server,
+                    vm = sftpVm,
                     onClose = { showSftpPanel = false },
                     modifier = Modifier
                         .weight(1f)
