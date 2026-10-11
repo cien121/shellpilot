@@ -198,6 +198,10 @@ fun SnippetsScreen(
                                 showEditor = true
                             },
                             onDelete = { toDelete = snippet },
+                            onRun = {
+                                val ok = onRun(snippet.command)
+                                if (!ok) scope.launch { snackbar.showSnackbar("无活跃终端连接") }
+                            },
                         )
                     }
                     item { Spacer(Modifier.height(80.dp)) }
@@ -241,6 +245,7 @@ private fun SnippetCard(
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onRun: () -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -276,6 +281,11 @@ private fun SnippetCard(
             )
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                SnippetAction(
+                    icon = Icons.Filled.PlayArrow,
+                    label = "执行",
+                    onClick = onRun,
+                )
                 SnippetAction(
                     icon = Icons.Filled.ContentCopy,
                     label = "复制",
