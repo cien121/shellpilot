@@ -1,5 +1,6 @@
 package com.chan.shellpilot.terminal
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +69,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chan.shellpilot.data.Server
+import com.chan.shellpilot.ui.sftp.SftpPanel
 import com.chan.shellpilot.util.SpLog
 import kotlinx.coroutines.delay
 
@@ -88,8 +92,8 @@ private fun escSeq(s: String): ByteArray =
 fun TerminalScreen(
     title: String,
     bridge: TerminalBridge?,
+    server: Server?,
     onBack: () -> Unit,
-    onOpenSftp: () -> Unit = {},
     onOpenSnippets: () -> Unit = {},
     onDisconnect: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -105,6 +109,9 @@ fun TerminalScreen(
     var stickToBottom by remember { mutableStateOf(true) }
     var ctrlSticky by remember { mutableStateOf(false) }
     var altSticky by remember { mutableStateOf(false) }
+
+    // 分屏文件管理：上半屏 SftpPanel，下半屏终端
+    var showSftpPanel by remember { mutableStateOf(false) }
 
     // 块状光标 500ms 闪烁：只重组光标所在行，不重建文本
     var cursorVisible by remember { mutableStateOf(true) }
@@ -182,6 +189,11 @@ fun TerminalScreen(
     // 进终端自动弹键盘
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
+    // 分屏打开时，系统返回键先关闭面板
+    if (showSftpPanel) {
+        BackHandler { showSftpPanel = false }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -196,8 +208,8 @@ fun TerminalScreen(
                     IconButton(onClick = onOpenSnippets) {
                         Icon(Icons.Filled.Code, contentDescription = "代码片段")
                     }
-                    // SFTP 文件管理入口：与终端共用同一条 SSH 连接
-                    IconButton(onClick = onOpenSftp) {
+                    // SFTP 文件管理：分屏打开上半屏，不跳页面
+                    IconButton(onClick = { showSftpPanel = !showSftpPanel }) {
                         Icon(Icons.Filled.Folder, contentDescription = "文件管理")
                     }
                     // 断开连接：返回键不再断开（保持后台连接），断开走这里
@@ -219,6 +231,16 @@ fun TerminalScreen(
                 .background(Color.Black)
                 .imePadding()
         ) {
+            if (showSftpPanel && server != null) {
+                SftpPanel(
+                    server = server,
+                    onClose = { showSftpPanel = false },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+                HorizontalDivider(color = Color(0xFF333333))
+            }
             Box(
                 modifier = Modifier
                     .weight(1f)
