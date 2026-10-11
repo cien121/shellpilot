@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,11 +20,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -45,7 +49,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,14 +65,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chan.shellpilot.data.Server
 import kotlinx.coroutines.launch
 import java.io.File
@@ -85,7 +93,7 @@ import java.util.Locale
 fun SftpScreen(
     server: Server,
     onBack: () -> Unit,
-    vm: SftpViewModel = viewModel(),
+    vm: SftpViewModel,
 ) {
     SftpPanel(
         server = server,
@@ -107,7 +115,7 @@ fun SftpScreen(
 fun SftpPanel(
     server: Server,
     onClose: () -> Unit,
-    vm: SftpViewModel = viewModel(),
+    vm: SftpViewModel,
     modifier: Modifier = Modifier,
     useBackIcon: Boolean = false,
 ) {
@@ -503,20 +511,75 @@ private fun SftpEditorScreen(
                 CircularProgressIndicator()
             }
         } else {
-            OutlinedTextField(
-                value = t,
-                onValueChange = { text = it },
+            // 带行号的编辑器：行号栏与文本区共享 editScroll，行号通过 offset 跟随滚动。
+            // 行号行高 19.sp 与文本 lineHeight 一致，顶部 padding 12.dp 与文本区一致，保证对齐。
+            val editScroll = rememberScrollState()
+            val lineCount = t.count { it == '\n' } + 1
+            Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
                     .then(if (applyImePadding) Modifier.imePadding() else Modifier)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                textStyle = TextStyle(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                ),
-            )
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline,
+                        RoundedCornerShape(4.dp)
+                    )
+                    .clip(RoundedCornerShape(4.dp))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(44.dp)
+                        .fillMaxHeight()
+                        .clipToBounds()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .offset { IntOffset(0, -editScroll.value) }
+                            .padding(top = 12.dp, end = 8.dp)
+                    ) {
+                        repeat(lineCount) { i ->
+                            Text(
+                                text = "${i + 1}",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.End,
+                                color = Color(0xFF888888),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                lineHeight = 19.sp,
+                            )
+                        }
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        )
+                )
+                BasicTextField(
+                    value = t,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(top = 12.dp, bottom = 12.dp, start = 8.dp, end = 8.dp),
+                    textStyle = TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    scrollState = editScroll,
+                )
+            }
         }
     }
 }
