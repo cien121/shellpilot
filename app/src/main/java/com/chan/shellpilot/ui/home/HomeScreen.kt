@@ -71,6 +71,7 @@ fun HomeScreen(
     var pingLoading by remember { mutableStateOf(false) }
     var pingResult by remember { mutableStateOf<PingResult?>(null) }
     val pingScope = rememberCoroutineScope()
+    var showPingTool by remember { mutableStateOf(false) }
 
     fun startPing(host: String) {
         pingHost = host
@@ -89,6 +90,16 @@ fun HomeScreen(
             result = pingResult,
             onDismiss = { pingHost = null },
             onRetry = { startPing(pingHost!!) },
+        )
+    }
+
+    if (showPingTool) {
+        PingToolInputDialog(
+            onDismiss = { showPingTool = false },
+            onStart = { host ->
+                showPingTool = false
+                startPing(host)
+            },
         )
     }
 
@@ -171,6 +182,12 @@ fun HomeScreen(
                 title = "设置",
                 subtitle = "应用偏好设置、主题和数据",
                 onClick = onSettings,
+            )
+            ManageCard(
+                icon = Icons.Filled.NetworkPing,
+                title = "Ping 检测",
+                subtitle = "检测 IP/域名连通性、延迟",
+                onClick = { showPingTool = true },
             )
             Spacer(Modifier.height(24.dp))
         }
