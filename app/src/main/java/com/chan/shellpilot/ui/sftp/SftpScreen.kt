@@ -10,6 +10,7 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
@@ -76,15 +78,38 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * SFTP 文件管理（终端内入口）：
+ * SFTP 文件管理（全屏页面）：复用 SftpPanel。
  * 目录浏览 / 上级切换 / 文本文件打开编辑保存 / 上传 / 下载 / 删除。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SftpScreen(
     server: Server,
     onBack: () -> Unit,
     vm: SftpViewModel = viewModel(),
+) {
+    SftpPanel(
+        server = server,
+        vm = vm,
+        onClose = onBack,
+        useBackIcon = true,
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * SFTP 文件管理面板（可复用）：
+ * - 全屏 SftpScreen 直接复用本组件；
+ * - 终端分屏模式下嵌入上半屏，下半屏保持终端。
+ * 最外层为 Column（不带 Scaffold），调用方通过 modifier 控制尺寸。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SftpPanel(
+    server: Server,
+    onClose: () -> Unit,
+    vm: SftpViewModel = viewModel(),
+    modifier: Modifier = Modifier,
+    useBackIcon: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -123,130 +148,150 @@ fun SftpScreen(
 
     LaunchedEffect(server.id) { vm.start(server) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        (state.path.ifBlank { "文件管理" }) +
-                            if (state.execOnly) " · 兼容模式" else "",
-                        fontSize = 15.sp,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
+    Column(
+        modifier = modifier.background(MaterialTheme.colorScheme.background)
+    ) {
+        TopAppBar(
+            title = {
+                Text(
+                    (state.path.ifBlank { "文件管理" }) +
+                        if (state.execOnly) " · 兼容模式" else "",
+                    fontSize = 15.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onClose) {
+                    Icon(
+                        if (useBackIcon) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.Close,
+                        contentDescription = "关闭"
                     )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { vm.goUp() }) {
-                        Icon(Icons.Filled.ArrowUpward, contentDescription = "上级目录")
-                    }
-                    IconButton(onClick = { pickUpload.launch("*/*") }) {
-                        Icon(Icons.Filled.Upload, contentDescription = "上传")
-                    }
-                    IconButton(onClick = { vm.showDiag() }) {
-                        Icon(Icons.Filled.BugReport, contentDescription = "连接诊断")
-                    }
-                    IconButton(onClick = { vm.refresh() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "刷新")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
-                ),
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { padding ->
+                }
+            },
+            actions = {
+                IconButton(onClick = { vm.goUp() }) {
+                    Icon(Icons.Filled.ArrowUpward, contentDescription = "上级目录")
+                }
+                IconButton(onClick = { pickUpload.launch("*/*") }) {
+                    Icon(Icons.Filled.Upload, contentDescription = "上传")
+                }
+                IconButton(onClick = { vm.showDiag() }) {
+                    Icon(Icons.Filled.BugReport, contentDescription = "连接诊断")
+                }
+                IconButton(onClick = { vm.refresh() }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "刷新")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background
+            ),
+        )
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+                .weight(1f)
+                .fillMaxWidth(),
         ) {
-            when {
-                (state.loading && !state.ready) || (state.connecting && !state.ready) -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        CircularProgressIndicator()
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            "正在连接 ${server.name}…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                state.error != null && !state.ready -> {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            state.error!!,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        if (!state.execOnly) {
-                            TextButton(onClick = { vm.setExecOnly(true) }) {
-                                Text("切换到兼容模式（纯命令）")
-                            }
-                        }
-                        TextButton(onClick = { vm.showDiag() }) { Text("连接诊断") }
-                        TextButton(onClick = { vm.refresh() }) { Text("重试") }
-                    }
-                }
-                else -> {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(state.entries, key = { it.path }) { entry ->
-                            SftpRow(
-                                entry = entry,
-                                onOpen = {
-                                    if (entry.isDir) {
-                                        vm.enterDir(entry)
-                                    } else {
-                                        scope.launch {
-                                            vm.readText(entry.path)
-                                                .onSuccess { editingEntry = entry }
-                                                .onFailure {
-                                                    toast(it.message?.take(100) ?: "打开失败")
-                                                }
-                                        }
-                                    }
-                                },
-                                onDownload = {
-                                    scope.launch {
-                                        downloadToPublic(
-                                            context, vm, entry,
-                                            onOk = { toast("已下载到 Download/$it") },
-                                            onErr = { toast("下载失败：${it.take(80)}") },
-                                        )
-                                    }
-                                },
-                                onDelete = { deleteTarget = entry },
+            val target = editingEntry
+            if (target != null) {
+                SftpEditorScreen(
+                    entry = target,
+                    vm = vm,
+                    onBack = { editingEntry = null },
+                    onSaved = {
+                        editingEntry = null
+                        toast("已保存")
+                    },
+                    onError = { toast("保存失败：${it.take(80)}") },
+                    // 分屏嵌入时键盘不遮挡上半屏，不需要编辑器内部 imePadding；全屏模式保留。
+                    applyImePadding = useBackIcon,
+                )
+            } else {
+                when {
+                    (state.loading && !state.ready) || (state.connecting && !state.ready) -> {
+                        Column(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "正在连接 ${server.name}…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        item { Spacer(Modifier.height(80.dp)) }
+                    }
+                    state.error != null && !state.ready -> {
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(horizontal = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                state.error!!,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            if (!state.execOnly) {
+                                TextButton(onClick = { vm.setExecOnly(true) }) {
+                                    Text("切换到兼容模式（纯命令）")
+                                }
+                            }
+                            TextButton(onClick = { vm.showDiag() }) { Text("连接诊断") }
+                            TextButton(onClick = { vm.refresh() }) { Text("重试") }
+                        }
+                    }
+                    else -> {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(state.entries, key = { it.path }) { entry ->
+                                SftpRow(
+                                    entry = entry,
+                                    onOpen = {
+                                        if (entry.isDir) {
+                                            vm.enterDir(entry)
+                                        } else {
+                                            scope.launch {
+                                                vm.readText(entry.path)
+                                                    .onSuccess { editingEntry = entry }
+                                                    .onFailure {
+                                                        toast(it.message?.take(100) ?: "打开失败")
+                                                    }
+                                            }
+                                        }
+                                    },
+                                    onDownload = {
+                                        scope.launch {
+                                            downloadToPublic(
+                                                context, vm, entry,
+                                                onOk = { toast("已下载到 Download/$it") },
+                                                onErr = { toast("下载失败：${it.take(80)}") },
+                                            )
+                                        }
+                                    },
+                                    onDelete = { deleteTarget = entry },
+                                )
+                            }
+                            item { Spacer(Modifier.height(80.dp)) }
+                        }
                     }
                 }
+                if (state.loading && state.ready) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp)
+                    )
+                }
             }
-            if (state.loading && state.ready) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 8.dp)
-                )
-            }
+            SnackbarHost(
+                hostState = snackbar,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
         }
     }
-
     // 主机指纹确认（首次连接 / 密钥变更）
     val hk = state.hostKeyInfo
     if (hk != null) {
@@ -302,21 +347,6 @@ fun SftpScreen(
             onRun = { vm.runDiagnostics() },
             onUseExecOnly = { vm.setExecOnly(true) },
             onDismiss = { vm.dismissDiag() },
-        )
-    }
-
-    // 文本编辑器（全屏）
-    val target = editingEntry
-    if (target != null) {
-        SftpEditorScreen(
-            entry = target,
-            vm = vm,
-            onBack = { editingEntry = null },
-            onSaved = {
-                editingEntry = null
-                toast("已保存")
-            },
-            onError = { toast("保存失败：${it.take(80)}") },
         )
     }
 
@@ -411,6 +441,7 @@ private fun SftpEditorScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit,
     onError: (String) -> Unit,
+    applyImePadding: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf<String?>(null) }
@@ -478,7 +509,7 @@ private fun SftpEditorScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .imePadding()
+                    .then(if (applyImePadding) Modifier.imePadding() else Modifier)
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 textStyle = TextStyle(
                     fontFamily = FontFamily.Monospace,
