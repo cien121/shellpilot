@@ -21,15 +21,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.NetworkPing
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import com.chan.shellpilot.util.PingResult
+import com.chan.shellpilot.util.ping
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +67,31 @@ fun HomeScreen(
     onAddServer: () -> Unit,
     cardPerf: Map<Long, PerfStats> = emptyMap(),
 ) {
+    var pingHost by remember { mutableStateOf<String?>(null) }
+    var pingLoading by remember { mutableStateOf(false) }
+    var pingResult by remember { mutableStateOf<PingResult?>(null) }
+    val pingScope = rememberCoroutineScope()
+
+    fun startPing(host: String) {
+        pingHost = host
+        pingLoading = true
+        pingResult = null
+        pingScope.launch {
+            pingResult = ping(host)
+            pingLoading = false
+        }
+    }
+
+    if (pingHost != null) {
+        PingResultDialog(
+            host = pingHost!!,
+            loading = pingLoading,
+            result = pingResult,
+            onDismiss = { pingHost = null },
+            onRetry = { startPing(pingHost!!) },
+        )
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -116,6 +151,7 @@ fun HomeScreen(
                     server = server,
                     perf = cardPerf[server.id],
                     onClick = { onConnectServer(server) },
+                    onPing = { startPing(server.host) },
                 )
             }
         }
@@ -204,6 +240,7 @@ private fun ServerCard(
     server: Server,
     perf: PerfStats?,
     onClick: () -> Unit,
+    onPing: () -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -243,6 +280,14 @@ private fun ServerCard(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(server.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            }
+            IconButton(onClick = onPing) {
+                Icon(
+                    Icons.Filled.NetworkPing,
+                    contentDescription = "ping 检测",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
             }
             Icon(
                 Icons.Filled.StarBorder,
