@@ -56,6 +56,7 @@ import com.chan.shellpilot.ui.home.HomeScreen
 import com.chan.shellpilot.ui.home.ManageConnectionsScreen
 import com.chan.shellpilot.ui.settings.SettingsScreen
 import com.chan.shellpilot.ui.sftp.SftpScreen
+import com.chan.shellpilot.ui.sftp.SftpViewModel
 import com.chan.shellpilot.ui.snippets.SnippetsScreen
 import com.chan.shellpilot.ui.theme.ShellPilotTheme
 import com.chan.shellpilot.util.SpLog
@@ -80,6 +81,7 @@ class MainActivity : ComponentActivity() {
                 val terminalViewModel: TerminalViewModel = viewModel()
                 val cardPerfVm: ServerCardPerfViewModel = viewModel()
                 val eventLogViewModel: EventLogViewModel = viewModel()
+                val sftpViewModel: SftpViewModel = viewModel()
                 val scope = rememberCoroutineScope()
                 var route by remember { mutableStateOf(Route.Home) }
                 var placeholderTitle by remember { mutableStateOf("") }
@@ -189,6 +191,7 @@ class MainActivity : ComponentActivity() {
                                 title = srv.name,
                                 bridge = bridge,
                                 server = srv,
+                                sftpVm = sftpViewModel,
                                 onBack = {
                                     // 返回主页不断开：连接在 Application 级保活，
                                     // 用户可去性能监视器/SFTP 等页面，回来继续用。
@@ -217,6 +220,7 @@ class MainActivity : ComponentActivity() {
                         if (srv != null) {
                             SftpScreen(
                                 server = srv,
+                                vm = sftpViewModel,
                                 onBack = { route = Route.Terminal },
                             )
                         } else {
