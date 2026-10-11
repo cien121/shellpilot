@@ -267,7 +267,7 @@ class MainActivity : ComponentActivity() {
                     }
                     Route.Snippets -> {
                         SnippetsScreen(
-                            onBack = { route = Route.Home },
+                            onBack = { route = if (bridge != null) Route.Terminal else Route.Home },
                             onRun = { cmd ->
                                 val b = bridge
                                 if (b != null) {
