@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -89,6 +90,7 @@ fun TerminalScreen(
     bridge: TerminalBridge?,
     onBack: () -> Unit,
     onOpenSftp: () -> Unit = {},
+    onOpenSnippets: () -> Unit = {},
     onDisconnect: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -190,6 +192,10 @@ fun TerminalScreen(
                     }
                 },
                 actions = {
+                    // 代码片段快捷入口
+                    IconButton(onClick = onOpenSnippets) {
+                        Icon(Icons.Filled.Code, contentDescription = "代码片段")
+                    }
                     // SFTP 文件管理入口：与终端共用同一条 SSH 连接
                     IconButton(onClick = onOpenSftp) {
                         Icon(Icons.Filled.Folder, contentDescription = "文件管理")
