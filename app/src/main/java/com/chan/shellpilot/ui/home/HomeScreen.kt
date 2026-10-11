@@ -21,7 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.NetworkPing
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Card
@@ -184,7 +184,7 @@ fun HomeScreen(
                 onClick = onSettings,
             )
             ManageCard(
-                icon = Icons.Filled.NetworkPing,
+                icon = Icons.Filled.Speed,
                 title = "Ping 检测",
                 subtitle = "检测 IP/域名连通性、延迟",
                 onClick = { showPingTool = true },
@@ -300,7 +300,7 @@ private fun ServerCard(
             }
             IconButton(onClick = onPing) {
                 Icon(
-                    Icons.Filled.NetworkPing,
+                    Icons.Filled.Speed,
                     contentDescription = "ping 检测",
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp),
