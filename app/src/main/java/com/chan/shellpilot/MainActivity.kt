@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
                             TerminalScreen(
                                 title = srv.name,
                                 bridge = bridge,
+                                server = srv,
                                 onBack = {
                                     // 返回主页不断开：连接在 Application 级保活，
                                     // 用户可去性能监视器/SFTP 等页面，回来继续用。
@@ -199,7 +200,6 @@ class MainActivity : ComponentActivity() {
                                     currentServer = null
                                     route = Route.Home
                                 },
-                                onOpenSftp = { route = Route.Sftp },
                                 onOpenSnippets = { route = Route.Snippets },
                             )
                         } else {
